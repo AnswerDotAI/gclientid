@@ -2,14 +2,45 @@
 
 Create Google OAuth desktop client IDs locally, without requiring `gcloud`.
 
-The first implemented primitives create and delete Google Cloud projects through
-an existing signed-in Chrome session:
+`gclientid` uses an existing signed-in [fastcdp](https://github.com/AnswerDotAI/fastcdp) Chrome session. Create a globally unique project ID, provision its Gmail Desktop OAuth client, and authorize the Gmail account:
 
 ```python
-from gclientid import create_project, delete_project
+from fastcdp import CDP
+from gclientid import create_gmail_client, create_project, authorize_gmail
 
-await create_project(page, 'globally-unique-project-id', name='gclientids')
-await delete_project(page, 'globally-unique-project-id')
+cdp = await CDP.remote()
+page = await cdp.active_page()
+project_id = 'gclientids-your-unique-suffix'
+
+await create_project(page, project_id, name='gclientids')
+await create_gmail_client(page, project_id, 'oauth-client.json')
+await authorize_gmail(cdp, 'oauth-client.json', 'oauth-token.json')
+```
+
+`create_gmail_client` enables the Gmail API, configures an External OAuth application, adds the full Gmail scope, publishes the unverified application, creates a Desktop client, and writes Google's installed-app client JSON. It selects an email offered by the signed-in Google account for the support and contact fields. It does not require an email or username argument.
+
+On a new Google Auth Platform application, `create_gmail_client` pauses at Google's API Services terms screen. Complete that visible screen in Chrome and the function continues. Pass `accept_terms=True` to accept and submit that screen automatically:
+
+```python
+await create_gmail_client(page, project_id, 'oauth-client.json', accept_terms=True)
+```
+
+`authorize_gmail` opens Google's account and consent screens in a new Chrome tab. It selects the account automatically when Google offers one existing account, then approves the requested Gmail access. When Google offers multiple existing accounts, select one by display name or email substring:
+
+```python
+await authorize_gmail(cdp, 'oauth-client.json', 'oauth-token.json', account='j@example.com')
+```
+
+The function uses a PKCE loopback flow and writes the access token, refresh token, granted scope, client ID, and creation time to `oauth-token.json`.
+
+Both JSON files are created with mode `0600`. `create_gmail_client` refuses to overwrite an existing client file because Google only exposes the Desktop client secret at creation time. `authorize_gmail` replaces the token file when authorization succeeds. Keep both files out of git.
+
+Project deletion is also available. Google keeps a deleted project recoverable for 30 days:
+
+```python
+from gclientid import delete_project
+
+await delete_project(page, project_id)
 ```
 
 See the [privacy policy](PRIVACY.md) for how Google user data is handled.
