@@ -15,7 +15,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-dependencies = ["fastcdp", "httpx"]
+dependencies = ["fastcdp>=0.0.8", "httpx"]
 
 [project.optional-dependencies]
 dev = [
