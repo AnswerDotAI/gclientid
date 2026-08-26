@@ -1,6 +1,18 @@
 # gclientid
 
-A modern Python package scaffolded by **fastship**.
+Create Google OAuth desktop client IDs locally, without requiring `gcloud`.
+
+The first implemented primitives create and delete Google Cloud projects through
+an existing signed-in Chrome session:
+
+```python
+from gclientid import create_project, delete_project
+
+await create_project(page, 'globally-unique-project-id', name='gclientids')
+await delete_project(page, 'globally-unique-project-id')
+```
+
+See the [privacy policy](PRIVACY.md) for how Google user data is handled.
 
 ## Development
 
