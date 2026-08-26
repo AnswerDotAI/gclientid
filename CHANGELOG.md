@@ -1,5 +1,12 @@
 <!-- do not remove -->
 
+## 0.1.1
+
+### New Features
+
+- Add an end-to-end CLI for Gmail OAuth setup ([#7](https://github.com/AnswerDotAI/gclientid/pull/7)), thanks to [@jph00](https://github.com/jph00)
+
+
 ## 0.1.0
 
 ### New Features
