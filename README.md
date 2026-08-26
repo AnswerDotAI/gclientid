@@ -2,6 +2,38 @@
 
 Create Google OAuth desktop client IDs locally, without requiring `gcloud`.
 
+## CLI
+
+Install `gclientid`, enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, and run:
+
+```bash
+pip install gclientid
+gclientid
+```
+
+Chrome asks you to approve the debugging connection. `gclientid` opens a separate tab, creates a dedicated project with a unique `gclientids-*` ID, configures and publishes its unverified Gmail OAuth application, creates a Desktop client, and authorizes the selected Gmail account.
+
+Credentials are written with mode `0600` under `~/.config/gclientid/<project-id>/`:
+
+```text
+oauth-client.json
+oauth-token.json
+```
+
+The main options are:
+
+```bash
+gclientid --project my-unique-project-id
+gclientid --account j@example.com
+gclientid --accept-terms
+gclientid --cdp-chrome
+gclientid --output ./credentials
+```
+
+Run `gclientid --help` for all options. Existing credential files are never overwritten.
+
+## Python API
+
 `gclientid` uses an existing signed-in [fastcdp](https://github.com/AnswerDotAI/fastcdp) Chrome session. Enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, then create a globally unique project ID, provision its Gmail Desktop OAuth client, and authorize the Gmail account:
 
 ```python

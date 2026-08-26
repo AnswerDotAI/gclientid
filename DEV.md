@@ -9,6 +9,12 @@ credentials.
 After initially adding this repository with `ws-add`, restart any persistent
 Python/clikernel process so it sees the new workspace editable install.
 
+## CLI
+
+The `gclientid` entry point is `gclientid.cli:main`. `fastcore.script.call_parse` creates its arguments from the function signature and docments. A bare invocation runs the complete project, client, and authorization sequence. It generates `gclientids-<10 random hex digits>` and stores credentials under `~/.config/gclientid/<project-id>/` by default. `--project`, `--output`, `--account`, `--accept-terms`, and `--cdp-chrome` expose the choices needed for non-default setups.
+
+The CLI checks both destination files before creating the Cloud project. It closes its setup tab and CDP connection on success or failure. It never prints client secrets or OAuth tokens.
+
 ## Google Cloud project lifecycle
 
 Project creation starts at `https://console.cloud.google.com/projectcreate`.
