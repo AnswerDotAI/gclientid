@@ -4,6 +4,8 @@
 fastcdp. It does not require `gcloud` and should not own the developer's Google
 credentials.
 
+`connect_browser()` uses `CDP.connect(timeout=60)` by default. This connects to the normal Chrome profile after the developer enables **Allow remote debugging** in `chrome://inspect/#remote-debugging`; Chrome asks the developer to approve each new connection. `connect_browser(default_browser=False)` uses `CDP.remote()` and the dedicated CDP Chrome profile on port 9223. Both paths return `(cdp, page)` with a new tab, so setup never navigates the developer's focused tab away. fastcdp's `active_page()` skips `chrome://` and `devtools://` targets because Chrome accepts attachment but never answers page commands for them.
+
 After initially adding this repository with `ws-add`, restart any persistent
 Python/clikernel process so it sees the new workspace editable install.
 
