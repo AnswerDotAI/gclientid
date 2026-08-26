@@ -11,9 +11,11 @@ Python/clikernel process so it sees the new workspace editable install.
 
 ## CLI
 
-The `gclientid` entry point is `gclientid.cli:main`. `fastcore.script.call_parse` creates its arguments from the function signature and docments. A bare invocation runs the complete project, client, and authorization sequence. It generates `gclientids-<10 random hex digits>` and stores credentials under `~/.config/gclientid/<project-id>/` by default. `--project`, `--output`, `--account`, `--accept-terms`, and `--cdp-chrome` expose the choices needed for non-default setups.
+The `gclientid` entry point is `gclientid.cli:main`; `gclientid-auth` is `gclientid.cli:auth`. `fastcore.script.call_parse` creates their arguments from the function signatures and docments. A bare `gclientid` invocation provisions the project and client with the `google-apps` preset, then stops. `gclientid --authorize` additionally authorizes a data account in the same browser connection. A bare `gclientid-auth` authorizes from an existing client. Provisioning generates `gclientids-<10 random hex digits>` and stores files directly under `$XDG_CONFIG_HOME/gclientid/` by default. `--output` replaces that directory; it does not add a project subdirectory.
 
-The CLI checks both destination files before creating the Cloud project. It closes its setup tab and CDP connection on success or failure. It never prints client secrets or OAuth tokens.
+Provisioning writes `config.ini` using `fastcore.xdg.Config`. It records the project, name, preset, and custom scopes/APIs separately from Google's unmodified `oauth-client.json`. `gclientid-auth` reads the saved preset and custom scopes by default; its own `--preset` overrides the base preset and repeatable `--scope` values augment the saved scopes. This also allows authorization from a client JSON created elsewhere: without `config.ini`, `gclientid-auth` defaults to `google-apps`.
+
+The account active in Cloud Console provisions and owns the project and OAuth client. `--account` on `gclientid-auth` or combined `gclientid --authorize` selects the separate data account during OAuth; it does not switch the Console account. The provisioning CLI checks both destination credential files before creating the Cloud project, closes its setup tab and CDP connection on success or failure, and never prints client secrets or OAuth tokens.
 
 ## Google Cloud project lifecycle
 
@@ -41,18 +43,18 @@ Add `answerdotai.github.io` to the consent screen's authorized domains. GitHub
 blob URLs caused a generic branding-save failure, while the Pages URLs saved
 successfully. This keeps setup independent of a particular developer's email.
 
-The August 2026 live OAuth check used a loopback redirect, PKCE, offline access,
-and `https://mail.google.com/`. Authorization succeeded without a test-user
-allowlist after publishing the unverified app, produced a refresh token, and
-successfully called `gmail.users.getProfile`. Google's token endpoint returned
-`client_secret is missing` when the Desktop client secret was omitted despite
-PKCE; capture the one-time secret from the creation dialog.
+The August 27, 2026 live OAuth check used a loopback redirect, PKCE, offline
+access, and the `google-apps` preset. Authorization as `j@answer.ai` succeeded
+without a test-user allowlist, produced a refresh token, and returned every
+requested scope. Representative Gmail, Drive, Calendar, People, and Tasks API
+calls all returned 200. Google's token endpoint requires the Desktop client
+secret despite PKCE; capture the one-time secret from the creation dialog.
 
-`create_gmail_client` implements the complete Console path. It enables the Gmail API, initializes an External Auth Platform application when needed, configures the Pages branding URLs, adds the full Gmail scope, publishes the application, creates a Desktop client, and writes installed-app JSON with mode `0600`. It waits on the visible API Services terms screen unless `accept_terms=True`.
+`create_client` implements the complete Console path. It enables each preset API, initializes an External Auth Platform application when needed, configures the Pages branding URLs, adds every preset scope, publishes the application, creates a Desktop client, and writes installed-app JSON with mode `0600`. It waits on the visible API Services terms screen unless `accept_terms=True`.
 
-The Data Access route is `/auth/scopes`, not `/auth/dataaccess`. Its accessibility tree renders the saved scope as `https://mail .google .com/`. Scope detection removes spaces from row names before comparing them with `https://mail.google.com/`.
+The Data Access route is `/auth/scopes`, not `/auth/dataaccess`. Its manual scope box accepts one scope per line; adding the complete preset again is idempotent. The Console abbreviates most saved scope URLs in the accessibility tree, so `create_client` pastes the desired set rather than trying to reconstruct full URLs from displayed rows.
 
-`authorize_gmail` opens and activates a new Chrome tab, uses a PKCE loopback callback, and writes token JSON with mode `0600`. It selects the sole existing Google account automatically. The `account` parameter selects a unique display-name or email substring when several existing accounts are available. The function clicks `Allow` after account selection because the caller has already requested the full Gmail authorization.
+`authorize_google` opens and activates a new Chrome tab, uses a PKCE loopback callback, and writes token JSON with mode `0600`. It selects the sole existing Google account automatically. The `account` parameter selects a unique display-name or email substring when several existing accounts are available. Consent may use `Continue` or `Allow`; the helper also advances through the unverified-app warning and selects all permissions when Google presents granular consent.
 
 Deletion uses the project's IAM & Admin settings page. Google calls this action
 "Shut down" and requires the project ID to be typed into a confirmation dialog.
@@ -76,3 +78,5 @@ connection before returning.
 The live create/delete check used `gclientid-test-20260826-fcdc`. Google
 confirmed that it is shut down and scheduled for permanent deletion after
 September 25, 2026.
+
+Google API Library navigation can reach a URL before its Angular content is rendered. `_enable_apis` waits for the page text containing the exact service name before reading its AX tree; an immediate `ax_tree()` can otherwise miss the Enable button and silently skip an API.
