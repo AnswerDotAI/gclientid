@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gclientid"
+dynamic = ["version"]
+description = "Create Google OAuth desktop client IDs locally"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{name = "Jeremy Howard", email = "github@jhoward.fastmail.fm"}]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+]
+
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "fastship",
+  "build",
+  "twine",
+]
+
+[project.urls]
+Homepage = "https://github.com/AnswerDotAI/gclientid"
+
+[tool.setuptools.dynamic]
+version = { attr = "gclientid.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["gclientid"]
