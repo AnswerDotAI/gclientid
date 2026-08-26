@@ -15,7 +15,10 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-dependencies = ["fastcdp>=0.0.8", "httpx"]
+dependencies = ["fastcdp>=0.0.8", "fastcore>=2.2.16", "httpx"]
+
+[project.scripts]
+gclientid = "gclientid.cli:main"
 
 [project.optional-dependencies]
 dev = [
