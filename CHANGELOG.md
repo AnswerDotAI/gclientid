@@ -1,5 +1,12 @@
 <!-- do not remove -->
 
+## 0.1.2
+
+### New Features
+
+- Add broad Google OAuth presets and separate account authorization ([#8](https://github.com/AnswerDotAI/gclientid/pull/8)), thanks to [@jph00](https://github.com/jph00)
+
+
 ## 0.1.1
 
 ### New Features
