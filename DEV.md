@@ -24,10 +24,21 @@ and parent resource. Choosing among multiple accounts or organizations remains
 future work. Google Cloud project IDs must be globally unique.
 
 For an External app published without verification, use the repository as the
-application homepage and
-`https://github.com/AnswerDotAI/gclientid/blob/main/PRIVACY.md` as the privacy
-policy. Add `github.com` to the consent screen's authorized domains. This keeps
-the setup independent of a particular developer's email address.
+application homepage and privacy policy:
+
+- `https://answerdotai.github.io/gclientid/`
+- `https://answerdotai.github.io/gclientid/privacy/`
+
+Add `answerdotai.github.io` to the consent screen's authorized domains. GitHub
+blob URLs caused a generic branding-save failure, while the Pages URLs saved
+successfully. This keeps setup independent of a particular developer's email.
+
+The August 2026 live OAuth check used a loopback redirect, PKCE, offline access,
+and `https://mail.google.com/`. Authorization succeeded without a test-user
+allowlist after publishing the unverified app, produced a refresh token, and
+successfully called `gmail.users.getProfile`. Google's token endpoint returned
+`client_secret is missing` when the Desktop client secret was omitted despite
+PKCE; capture the one-time secret from the creation dialog.
 
 Deletion uses the project's IAM & Admin settings page. Google calls this action
 "Shut down" and requires the project ID to be typed into a confirmation dialog.
