@@ -2,19 +2,23 @@
 
 Create Google OAuth desktop client IDs locally, without requiring `gcloud`.
 
-`gclientid` uses an existing signed-in [fastcdp](https://github.com/AnswerDotAI/fastcdp) Chrome session. Create a globally unique project ID, provision its Gmail Desktop OAuth client, and authorize the Gmail account:
+`gclientid` uses an existing signed-in [fastcdp](https://github.com/AnswerDotAI/fastcdp) Chrome session. Enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, then create a globally unique project ID, provision its Gmail Desktop OAuth client, and authorize the Gmail account:
 
 ```python
-from fastcdp import CDP
-from gclientid import create_gmail_client, create_project, authorize_gmail
+from gclientid import authorize_gmail, connect_browser, create_gmail_client, create_project
 
-cdp = await CDP.remote()
-page = await cdp.active_page()
+cdp, page = await connect_browser()
 project_id = 'gclientids-your-unique-suffix'
 
 await create_project(page, project_id, name='gclientids')
 await create_gmail_client(page, project_id, 'oauth-client.json')
 await authorize_gmail(cdp, 'oauth-client.json', 'oauth-token.json')
+```
+
+`connect_browser()` uses the normal Chrome profile by default. Chrome gives you 60 seconds to approve the debugging connection. The function opens a new tab instead of navigating the currently focused tab. To use the separate CDP Chrome profile on port 9223 instead:
+
+```python
+cdp, page = await connect_browser(default_browser=False)
 ```
 
 `create_gmail_client` enables the Gmail API, configures an External OAuth application, adds the full Gmail scope, publishes the unverified application, creates a Desktop client, and writes Google's installed-app client JSON. It selects an email offered by the signed-in Google account for the support and contact fields. It does not require an email or username argument.

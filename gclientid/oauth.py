@@ -16,6 +16,16 @@ TOKEN_URI = 'https://oauth2.googleapis.com/token'
 CERT_URI = 'https://www.googleapis.com/oauth2/v1/certs'
 
 
+async def connect_browser(
+    default_browser:bool=True, # Use normal Chrome instead of CDP Chrome?
+    timeout:int=60, # Seconds to wait for normal Chrome's approval
+) -> tuple[CDP, Page]:
+    "Connect to Chrome and return its connection and a new page"
+    try: cdp = await (CDP.connect(timeout=timeout) if default_browser else CDP.remote())
+    except FileNotFoundError: raise RuntimeError('Enable Allow remote debugging in chrome://inspect/#remote-debugging, then retry') from None
+    return cdp, await cdp.new_page()
+
+
 def _write_json(path:str|Path, data:dict) -> Path:
     "Write private JSON and return its path"
     path = Path(path)
