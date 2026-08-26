@@ -40,6 +40,12 @@ successfully called `gmail.users.getProfile`. Google's token endpoint returned
 `client_secret is missing` when the Desktop client secret was omitted despite
 PKCE; capture the one-time secret from the creation dialog.
 
+`create_gmail_client` implements the complete Console path. It enables the Gmail API, initializes an External Auth Platform application when needed, configures the Pages branding URLs, adds the full Gmail scope, publishes the application, creates a Desktop client, and writes installed-app JSON with mode `0600`. It waits on the visible API Services terms screen unless `accept_terms=True`.
+
+The Data Access route is `/auth/scopes`, not `/auth/dataaccess`. Its accessibility tree renders the saved scope as `https://mail .google .com/`. Scope detection removes spaces from row names before comparing them with `https://mail.google.com/`.
+
+`authorize_gmail` opens and activates a new Chrome tab, uses a PKCE loopback callback, and writes token JSON with mode `0600`. It selects the sole existing Google account automatically. The `account` parameter selects a unique display-name or email substring when several existing accounts are available. The function clicks `Allow` after account selection because the caller has already requested the full Gmail authorization.
+
 Deletion uses the project's IAM & Admin settings page. Google calls this action
 "Shut down" and requires the project ID to be typed into a confirmation dialog.
 It is a soft deletion: the project becomes inaccessible immediately but remains
