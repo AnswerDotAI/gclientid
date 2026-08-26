@@ -6,16 +6,18 @@ permalink: /privacy/
 
 # Privacy policy
 
-Last updated: August 26, 2026
+Last updated: August 27, 2026
 
 `gclientid` is open-source software that runs locally on a user's computer. It
 does not operate an AnswerDotAI service and does not send Google credentials,
-OAuth tokens, email, or usage data to AnswerDotAI or third-party servers.
+OAuth tokens, Google user data, or usage data to AnswerDotAI or third-party
+servers.
 
-When the software requests access to Gmail, it uses that access only to provide
-the local functionality requested by the user. Google user data is stored on
-the user's computer and remains under the user's control. It is retained until
-the user removes the corresponding local files or database.
+When the software requests access to Google services such as Gmail, Drive,
+Calendar, Contacts, or Tasks, it uses that access only to provide the local
+functionality requested by the user. Google user data is stored on the user's
+computer and remains under the user's control. It is retained until the user
+removes the corresponding local files or database.
 
 Users can revoke the software's Google Account access at any time from their
 Google Account security settings. Revoking access does not delete data already

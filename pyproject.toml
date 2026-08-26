@@ -19,6 +19,7 @@ dependencies = ["fastcdp>=0.0.8", "fastcore>=2.2.16", "httpx"]
 
 [project.scripts]
 gclientid = "gclientid.cli:main"
+gclientid-auth = "gclientid.cli:auth"
 
 [project.optional-dependencies]
 dev = [
