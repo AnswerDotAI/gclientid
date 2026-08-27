@@ -1,29 +1,88 @@
 # gclientid
 
-Create Google OAuth desktop client IDs locally, without requiring `gcloud`.
+`gclientid` creates a personal Google OAuth application and Desktop client ID in your Google Cloud account. It can also authorize a Google account and save a refresh token for local access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, Slides, Google Cloud, or Workspace administration. Everything runs on your computer. It does not require `gcloud`.
 
-## CLI
-
-Install `gclientid`, enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, and run:
+## Install
 
 ```bash
 pip install gclientid
+```
+
+## 1. Choose a browser
+
+`gclientid` drives Google Cloud Console and Google's OAuth screens through Chrome. Choose one browser setup and use it for both commands.
+
+### Normal Chrome
+
+Use normal Chrome when you want `gclientid` to use your existing Google logins. Enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`. Chrome asks you to approve each connection from `gclientid`.
+
+Normal Chrome is the default. Do not pass a browser flag in the commands below.
+
+### CDP Chrome
+
+CDP Chrome is a separate browser profile for automation. It does not show connection-approval prompts. Install its launcher once:
+
+```bash
+fastcdp-setup
+```
+
+Start the installed **CDP Chrome** launcher and sign in to the Google accounts you want to use. Add `--cdp-chrome` to every command below.
+
+## 2. Create the project and OAuth client
+
+The default `google-apps` preset requests broad access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, and Slides. Run:
+
+```bash
 gclientid
 ```
 
-Chrome asks you to approve the debugging connection. `gclientid` opens a separate tab, creates a dedicated project with a unique `gclientids-*` ID, configures and publishes its unverified OAuth application, creates a Desktop client, and stops.
+Choose a different preset during setup when needed:
 
-Then authorize a Google account using that client:
+- `gmail` requests identity information and unrestricted Gmail access.
+- `developer` adds `cloud-platform` to `google-apps`. Google Cloud access remains limited by the authorized account's IAM roles.
+- `workspace-admin` adds Workspace Admin SDK access to `google-apps`. Admin operations remain limited by the authorized account's Workspace privileges.
 
 ```bash
-gclientid-auth --account j@answer.ai
+gclientid --preset gmail
+gclientid --preset developer
+gclientid --preset workspace-admin
 ```
 
-Provisioning and authorization are deliberately separate. `gclientid` uses the account active in Google Cloud Console to create the project and client, then stops. `gclientid-auth` needs no Cloud Console access: it uses the saved client to authorize the selected data account. To do both in one browser connection instead, run `gclientid --authorize`, optionally with `--account`.
+Add scopes and APIs that are not in a preset with repeatable `--scope` and `--api` options:
 
-The default `google-apps` preset requests broad access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, and Slides. The account active in Google Cloud Console owns the project and client; the account selected during OAuth owns the data. They may be different accounts, so a personal account can provision the client while a Workspace account authorizes its Google Apps data.
+```bash
+gclientid --scope https://www.googleapis.com/auth/forms.body --api forms.googleapis.com
+```
 
-Configuration and credentials are stored under `$XDG_CONFIG_HOME/gclientid/`, which defaults to `~/.config/gclientid/`:
+`gclientid` saves the selected preset and additions for later use by `gclientid-auth`.
+
+Add `--cdp-chrome` when using CDP Chrome. `gclientid` creates a dedicated Google Cloud project with a unique `gclientids-*` project ID. It configures the project's OAuth branding, consent screen, audience, scopes, and APIs. It publishes the unverified application and creates a Desktop OAuth client ID.
+
+The Google account active in Cloud Console owns the project and OAuth client. Complete any Google terms screen that appears in the browser. Pass `--accept-terms` to submit that screen automatically.
+
+This step creates `oauth-client.json`. It does not grant access to a Google account or create an access token.
+
+## 3. Authorize a Google account (optional)
+
+Authorization creates the refresh token that another local program can use to access Google APIs. You can authorize during initial setup:
+
+```bash
+gclientid --authorize
+```
+
+You can also authorize later with the separate command:
+
+```bash
+gclientid-auth
+```
+
+Add `--cdp-chrome` to either command when using CDP Chrome. Use `--account name@example.com` to select an account when Chrome offers several signed-in accounts. `gclientid-auth` reads the existing OAuth client and does not require Cloud Console access. The authorized data account can differ from the account that owns the Cloud project.
+
+Google issues access tokens for about one hour. The saved refresh token obtains new access tokens without repeating consent. A production refresh token has no fixed expiry, but Google invalidates it after six months without use or after events such as revocation and some account security changes.
+
+## Stored files
+
+`gclientid` stores configuration and credentials under `$XDG_CONFIG_HOME/gclientid/`. The default is `~/.config/gclientid/`:
 
 ```text
 config.ini
@@ -31,27 +90,11 @@ oauth-client.json
 oauth-token.json
 ```
 
-`config.ini` records the provisioned project, name, preset, and custom scopes/APIs, so `gclientid-auth` automatically requests the same access without repeating those options. The Google-generated client JSON is left unchanged. `oauth-token.json` is only created by `gclientid-auth` or `gclientid --authorize`.
-Both credential JSON files are written with mode `0600`.
+`config.ini` records the project, name, preset, and custom scopes and APIs. `oauth-client.json` is Google's unmodified Desktop client file. `oauth-token.json` is only created by authorization. Both credential JSON files use mode `0600`.
 
-The main options are:
+Pass `--output` to either command to use a different directory. Provisioning never overwrites existing credential files. Successful authorization replaces `oauth-token.json`.
 
-```bash
-gclientid --project my-unique-project-id
-gclientid --preset developer
-gclientid --preset workspace-admin
-gclientid --preset gmail
-gclientid --scope https://www.googleapis.com/auth/forms.body --api forms.googleapis.com
-gclientid --authorize --account j@answer.ai
-gclientid --accept-terms
-gclientid --cdp-chrome
-gclientid --output ./credentials
-gclientid-auth --account j@answer.ai
-gclientid-auth --scope https://www.googleapis.com/auth/forms.body
-gclientid-auth --cdp-chrome
-```
-
-Run `gclientid --help` or `gclientid-auth --help` for all options. `--output` replaces the complete credential directory rather than adding a project subdirectory. Provisioning never overwrites existing credential files; successful authorization replaces the token file.
+Run `gclientid --help` or `gclientid-auth --help` for all options.
 
 ## Python API
 
@@ -68,7 +111,7 @@ await create_client(page, project_id, 'oauth-client.json')
 await authorize_google(cdp, 'oauth-client.json', 'oauth-token.json', account='j@answer.ai')
 ```
 
-`connect_browser()` uses the normal Chrome profile by default. Chrome gives you 60 seconds to approve the debugging connection. The function opens a new tab instead of navigating the currently focused tab. To use the separate CDP Chrome profile on port 9223 instead:
+`connect_browser()` uses the normal Chrome profile by default. Chrome gives you 60 seconds to approve the debugging connection. The function opens a new tab instead of navigating the currently focused tab. To use the separate CDP Chrome profile on port 9223 instead, run `fastcdp-setup` once, start its CDP Chrome launcher, and connect with:
 
 ```python
 cdp, page = await connect_browser(default_browser=False)
