@@ -42,7 +42,7 @@ async def _provision(project_id, name, output, account, preset, scopes, apis, ac
             apis=apis, accept_terms=accept_terms)
         config_path = _save_settings(output, project_id, name, preset, scopes, apis)
         if authorize:
-            print('Authorizing Google account...')
+            print('Authorizing Google account; complete any passkey, Touch ID, or Chrome profile prompt...')
             token = await authorize_google(cdp, client_path, token_path, preset=preset, scopes=scopes, account=account)
     finally:
         await page.close()
@@ -64,7 +64,7 @@ async def _authorize(output, account, preset, scopes, cdp_chrome):
     print(f'Connecting to {browser}...')
     cdp,page = await connect_browser(default_browser=not cdp_chrome)
     try:
-        print(f'Authorizing Google account for {preset}...')
+        print(f'Authorizing Google account for {preset}; complete any passkey, Touch ID, or Chrome profile prompt...')
         token = await authorize_google(cdp, client_path, token_path, preset=preset, scopes=scopes, account=account)
     finally:
         await page.close()
@@ -79,7 +79,7 @@ async def main(
     Name:str='gclientids', # OAuth application and Desktop client name
     Output:Path=None, # Credential directory; $XDG_CONFIG_HOME/gclientid if omitted
     Account:str=None, # Google data account display-name or email substring when several are signed in
-    preset:str='google-apps', # Scope preset: google-apps, developer, workspace-admin, or gmail
+    preset:str='google-apps', # Scope preset: google-apps, developer, workspace-admin, max, or gmail
     scope:Annotated[str, dict(action='append')]=None, # Additional OAuth scope; may be repeated
     api:Annotated[str, dict(action='append')]=None, # Additional Google API service name; may be repeated
     accept_terms:bool=False, # Accept Google's API Services terms automatically?

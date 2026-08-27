@@ -20,11 +20,14 @@ CLOUD_APIS = tuple(f'{o}.googleapis.com' for o in 'cloudresourcemanager serviceu
 WORKSPACE_ADMIN_SCOPES = _auth_scopes('admin.directory.user admin.directory.group admin.directory.orgunit admin.directory.domain')
 WORKSPACE_ADMIN_SCOPES += _auth_scopes(
     'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly')
+MAX_SCOPES = GOOGLE_APPS_SCOPES + CLOUD_SCOPES + WORKSPACE_ADMIN_SCOPES
+MAX_APIS = GOOGLE_APPS_APIS + CLOUD_APIS + ('admin.googleapis.com',)
 PRESETS = {}
 PRESETS['gmail'] = dict(scopes=(*IDENTITY_SCOPES, GMAIL_SCOPE), apis=('gmail.googleapis.com',))
 PRESETS['google-apps'] = dict(scopes=GOOGLE_APPS_SCOPES, apis=GOOGLE_APPS_APIS)
 PRESETS['developer'] = dict(scopes=GOOGLE_APPS_SCOPES + CLOUD_SCOPES, apis=GOOGLE_APPS_APIS + CLOUD_APIS)
 PRESETS['workspace-admin'] = dict(scopes=GOOGLE_APPS_SCOPES + WORKSPACE_ADMIN_SCOPES, apis=(*GOOGLE_APPS_APIS, 'admin.googleapis.com'))
+PRESETS['max'] = dict(scopes=MAX_SCOPES, apis=MAX_APIS)
 
 
 def oauth_config(preset:str='google-apps', scopes=None, apis=None) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -211,18 +214,8 @@ async def create_client(
     return config
 
 
-async def authorize_google(
-    cdp:CDP, # CDP connection to a Chrome session signed into Google
-    client_path:str|Path='oauth-client.json', # Installed-app client JSON from create_client
-    token_path:str|Path='oauth-token.json', # Destination for access and refresh token JSON
-    preset:str='google-apps', # Scope preset
-    scopes=None, # Additional OAuth scopes
-    account:str=None, # Display-name or email substring when Google offers multiple accounts
-    timeout:int=600, # Seconds to wait for browser authorization
-) -> dict:
-    "Authorize Google APIs in Chrome and save refreshable token JSON"
-    client = json.loads(Path(client_path).read_text())['installed']
-    scopes,_ = oauth_config(preset, scopes)
+async def _request_token(cdp:CDP, client:dict, scopes, account:str, timeout:int, force_consent:bool=False) -> dict:
+    "Run one Google authorization and token exchange"
     callback = asyncio.get_running_loop().create_future()
 
     async def receive_oauth(reader, writer):
@@ -243,9 +236,11 @@ async def authorize_google(
     state = secrets.token_urlsafe(24)
     redirect_uri = f'http://127.0.0.1:{port}/'
     params = dict(client_id=client['client_id'], redirect_uri=redirect_uri, response_type='code', scope=' '.join(scopes),
-        access_type='offline', prompt='consent', include_granted_scopes='true', code_challenge=challenge,
-        code_challenge_method='S256', state=state)
+        access_type='offline', include_granted_scopes='true', code_challenge=challenge, code_challenge_method='S256', state=state)
+    if force_consent: params['prompt'] = 'consent'
+    if account and '@' in account: params['login_hint'] = account
     auth_url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urlencode(params)
+    auth_page = None
     try:
         auth_page = await cdp.new_page()
         await cdp.target.activateTarget(targetId=auth_page.t)
@@ -277,6 +272,9 @@ async def authorize_google(
     finally:
         server.close()
         await server.wait_closed()
+        if auth_page:
+            try: await auth_page.close()
+            except RuntimeError: pass
     if query.get('state') != [state]: raise RuntimeError('OAuth state did not match')
     if 'error' in query: raise RuntimeError(query['error'][0])
 
@@ -289,7 +287,34 @@ async def authorize_google(
         userinfo = await http.get('https://openidconnect.googleapis.com/v1/userinfo',
             headers={'Authorization': f'Bearer {token["access_token"]}'})
     userinfo.raise_for_status()
-    token['account'] = userinfo.json().get('email')
+    user = userinfo.json()
+    token['account'] = user.get('email')
+    if account and account.casefold() not in f'{user.get("name", "")} {token["account"]}'.casefold():
+        raise RuntimeError(f'Google authorized {token["account"]!r}, not account={account!r}')
+    return token
+
+
+async def authorize_google(
+    cdp:CDP, # CDP connection to a Chrome session signed into Google
+    client_path:str|Path='oauth-client.json', # Installed-app client JSON from create_client
+    token_path:str|Path='oauth-token.json', # Destination for access and refresh token JSON
+    preset:str='google-apps', # Scope preset
+    scopes=None, # Additional OAuth scopes
+    account:str=None, # Display-name or email substring when Google offers multiple accounts
+    timeout:int=600, # Seconds to wait for browser authorization
+) -> dict:
+    "Authorize Google APIs in Chrome and save refreshable token JSON"
+    client = json.loads(Path(client_path).read_text())['installed']
+    token_path = Path(token_path)
+    previous = json.loads(token_path.read_text()) if token_path.exists() else {}
+    scopes,_ = oauth_config(preset, scopes)
+    token = await _request_token(cdp, client, scopes, account, timeout)
+    if not token.get('refresh_token'):
+        same_grant = previous.get('client_id') == client['client_id'] and previous.get('account') == token['account']
+        if same_grant and previous.get('refresh_token'): token['refresh_token'] = previous['refresh_token']
+        else:
+            token = await _request_token(cdp, client, scopes, account, timeout, force_consent=True)
+            if not token.get('refresh_token'): raise RuntimeError('Google did not return a refresh token after explicit consent')
     token['client_id'] = client['client_id']
     token['created_at'] = datetime.now(timezone.utc).isoformat()
     _write_json(token_path, token)
