@@ -15,6 +15,8 @@ The `gclientid` entry point is `gclientid.cli:main`; `gclientid-auth` is `gclien
 
 Provisioning writes `config.ini` using `fastcore.xdg.Config`. It records the project, name, preset, and custom scopes/APIs separately from Google's unmodified `oauth-client.json`. `gclientid-auth` reads the saved preset and custom scopes by default; its own `--preset` overrides the base preset and repeatable `--scope` values augment the saved scopes. This also allows authorization from a client JSON created elsewhere: without `config.ini`, `gclientid-auth` defaults to `google-apps`.
 
+The `max` preset is the union of `google-apps`, `developer`, and `workspace-admin`. It is the broadest built-in preset, not every scope and API offered by Google.
+
 The account active in Cloud Console provisions and owns the project and OAuth client. `--account` on `gclientid-auth` or combined `gclientid --authorize` selects the separate data account during OAuth; it does not switch the Console account. The provisioning CLI checks both destination credential files before creating the Cloud project, closes its setup tab and CDP connection on success or failure, and never prints client secrets or OAuth tokens.
 
 ## Google Cloud project lifecycle
@@ -54,7 +56,13 @@ secret despite PKCE; capture the one-time secret from the creation dialog.
 
 The Data Access route is `/auth/scopes`, not `/auth/dataaccess`. Its manual scope box accepts one scope per line; adding the complete preset again is idempotent. The Console abbreviates most saved scope URLs in the accessibility tree, so `create_client` pastes the desired set rather than trying to reconstruct full URLs from displayed rows.
 
-`authorize_google` opens and activates a new Chrome tab, uses a PKCE loopback callback, and writes token JSON with mode `0600`. It selects the sole existing Google account automatically. The `account` parameter selects a unique display-name or email substring when several existing accounts are available. Consent may use `Continue` or `Allow`; the helper also advances through the unverified-app warning and selects all permissions when Google presents granular consent.
+`authorize_google` opens and activates a new Chrome tab, uses a PKCE loopback callback, and writes token JSON with mode `0600`. An email-valued `account` becomes Google's `login_hint`, which reuses an existing signed-in session instead of forcing reauthentication through the account chooser. When Google presents a chooser, `account` selects a unique email or display-name substring. The returned UserInfo is verified before saving the token. Consent may use `Continue` or `Allow`; the helper also advances through the unverified-app warning and selects all permissions when Google presents granular consent.
+
+Authorization omits `prompt=consent` on its first attempt. When Google omits `refresh_token`, `authorize_google` retains a saved refresh token only when its client ID and account match the new grant. Without a matching token it retries once with explicit consent. This confines forced consent and its reauthentication prompts to refresh-token recovery.
+
+The August 27 `max` retest without forced consent still required a passkey and completed in 29.9 seconds after the user satisfied it. An immediate repeat completed in 3.1 seconds without a passkey or Chrome-profile prompt. Both attempts verified `j@answer.ai`, granted all 19 expected scopes, and returned a refresh token. Google therefore appears to require recent authentication for the broad grant rather than passkey authentication on every authorization; forced consent was not the sole trigger.
+
+Broad scope grants can still trigger a native passkey or Touch ID prompt, followed by Chrome's prompt to create a browser profile for the web login. These controls are outside the page accessibility tree. The user must complete them while `authorize_google` waits.
 
 Deletion uses the project's IAM & Admin settings page. Google calls this action
 "Shut down" and requires the project ID to be typed into a confirmation dialog.

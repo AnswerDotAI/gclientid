@@ -20,7 +20,7 @@ Normal Chrome is the default. Do not pass a browser flag in the commands below.
 
 ### CDP Chrome
 
-CDP Chrome is a separate browser profile for automation. It does not show connection-approval prompts. Install its launcher once:
+CDP Chrome is a separate browser profile for automation. It does not show remote-debugging connection prompts. Install its launcher once:
 
 ```bash
 fastcdp-setup
@@ -38,15 +38,19 @@ gclientid
 
 Choose a different preset during setup when needed:
 
+- `max` is the broadest built-in preset. It combines `google-apps`, `developer`, and `workspace-admin`.
 - `gmail` requests identity information and unrestricted Gmail access.
 - `developer` adds `cloud-platform` to `google-apps`. Google Cloud access remains limited by the authorized account's IAM roles.
 - `workspace-admin` adds Workspace Admin SDK access to `google-apps`. Admin operations remain limited by the authorized account's Workspace privileges.
 
 ```bash
+gclientid --preset max
 gclientid --preset gmail
 gclientid --preset developer
 gclientid --preset workspace-admin
 ```
+
+`max` means every scope and API included in a gclientid preset. It does not mean every API offered by Google. Use custom scopes and APIs for products outside the built-in sets.
 
 Add scopes and APIs that are not in a preset with repeatable `--scope` and `--api` options:
 
@@ -76,9 +80,11 @@ You can also authorize later with the separate command:
 gclientid-auth
 ```
 
-Add `--cdp-chrome` to either command when using CDP Chrome. Use `--account name@example.com` to select an account when Chrome offers several signed-in accounts. `gclientid-auth` reads the existing OAuth client and does not require Cloud Console access. The authorized data account can differ from the account that owns the Cloud project.
+Add `--cdp-chrome` to either command when using CDP Chrome. Use `--account name@example.com` to select and verify an account by email or display name. `gclientid-auth` reads the existing OAuth client and does not require Cloud Console access. The authorized data account can differ from the account that owns the Cloud project.
 
-Google issues access tokens for about one hour. The saved refresh token obtains new access tokens without repeating consent. A production refresh token has no fixed expiry, but Google invalidates it after six months without use or after events such as revocation and some account security changes.
+Google can require a passkey or Touch ID before granting broad scopes, even when the account is already signed in. Chrome can then ask whether to create a Chrome profile for that Google account. Complete these browser-native prompts yourself; CDP cannot read or submit them.
+
+Google issues access tokens for about one hour. The saved refresh token obtains new access tokens without repeating consent. On later authorization, `gclientid` retains the matching saved refresh token when Google only returns a new access token. It retries with explicit consent only when no refresh token is available. A production refresh token has no fixed expiry, but Google invalidates it after six months without use or after events such as revocation and some account security changes.
 
 ## Stored files
 
