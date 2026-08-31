@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gclientid"
 dynamic = ["version"]
-description = "Create Google OAuth desktop client IDs locally"
+description = "Create personal Google OAuth clients and tokens locally"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
@@ -15,7 +15,7 @@ classifiers = [
   "Programming Language :: Python :: 3 :: Only",
 ]
 
-dependencies = ["fastcdp>=0.0.8", "fastcore>=2.2.16", "httpx"]
+dependencies = ["fastcdp>=0.0.10", "fastcore>=2.2.16", "fastgws>=0.2.7", "httpx"]
 
 [project.scripts]
 gclientid = "gclientid.cli:main"
