@@ -1,4 +1,4 @@
-import secrets
+import secrets, tempfile
 from pathlib import Path
 from typing import Annotated
 from urllib.parse import quote
@@ -21,6 +21,13 @@ def _paths(output, internal=False):
     return output,output/f'oauth-client{_suffix(internal)}.json'
 
 
+def _check_output_writable(output):
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryFile(dir=output): pass
+    except OSError as e: raise PermissionError(f'Cannot write to output directory: {output}') from e
+
+
 def _token_path(output, account, internal=False):
     return output/f'oauth-token-{quote(account.casefold(), safe="@._+-")}{_suffix(internal)}.json'
 
@@ -29,6 +36,7 @@ def _token_paths(output, internal=False): return [p for p in output.glob('oauth-
 
 
 async def _authorize_account(output, client_path, preset, scopes, account, cdp=None, remote=False, open_browser=True, internal=False):
+    _check_output_writable(output)
     tokens = _token_paths(output, internal)
     suffix = _suffix(internal)
     token_path = _token_path(output, account, internal) if account and '@' in account else tokens[0] if account is None and len(tokens) == 1 else output/f'oauth-token.pending{suffix}.json'
@@ -52,6 +60,7 @@ async def _provision(project_id, name, output, owner, account, preset, scopes, a
     if owner and '@' not in owner: raise ValueError('--owner must be a Google account email')
     if internal and not owner: raise ValueError('--internal requires an --owner with cloud-platform access')
     output,client_path = _paths(output, internal)
+    _check_output_writable(output)
     existing = [p for p in (client_path, *_token_paths(output, internal)) if p.exists()]
     if existing: raise FileExistsError(', '.join(map(str, existing)))
 
