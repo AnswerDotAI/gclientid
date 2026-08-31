@@ -1,6 +1,13 @@
 # gclientid
 
-`gclientid` creates a personal Google OAuth application and Desktop client ID in your Google Cloud account. It can also authorize a Google account and save a refresh token for local access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, Slides, Google Cloud, or Workspace administration. Everything runs on your computer. It does not require `gcloud`.
+`gclientid` creates a personal Google OAuth application in your own Google Cloud account. It can also authorize Google accounts and save standard refreshable tokens for Gmail, Drive, Calendar, Contacts, Tasks, Google Cloud, and Workspace administration.
+
+There are two independent operations:
+
+1. **Provisioning** creates a dedicated Cloud project, enables its APIs, then configures consent and creates a Web OAuth client in a signed-in Chrome. A first run can create the project through Cloud Console with no existing credentials; `--owner` uses Google APIs when a cloud-authorized gclientid account already exists. Google provides no supported API for a general-purpose OAuth client; its programmatic client API creates IAP-only clients.
+2. **Authorization** grants that client access to one Google account and writes a token. Normally it drives a signed-in Chrome and receives Google's response on a one-shot local callback; remote sessions can instead use a PKCE-protected appapis copy/paste callback.
+
+`gclientid` can do both in one command, but provisioning is the default. Everything runs locally and `gcloud` is neither used nor required.
 
 ## Install
 
@@ -8,176 +15,206 @@
 pip install gclientid
 ```
 
-## 1. Choose a browser
+## Quick start
 
-`gclientid` drives Google Cloud Console and Google's OAuth screens through Chrome. Choose one browser setup and use it for both commands.
+### 1. Choose a browser for OAuth setup
 
-### Normal Chrome
+Provisioning needs access to a Google Cloud Console session. Choose either approach.
 
-Use normal Chrome when you want `gclientid` to use your existing Google logins. Enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`. Chrome asks you to approve each connection from `gclientid`.
+**Your normal Chrome:** enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, then run `gclientid` normally. Chrome asks you to approve the connection. This is convenient when your usual browser is already signed into the Cloud account that should own the project.
 
-Normal Chrome is the default. Do not pass a browser flag in the commands below.
-
-### CDP Chrome
-
-CDP Chrome is a separate browser profile for automation. It does not show remote-debugging connection prompts. Install its launcher once:
+**Dedicated CDP Chrome:** install the launcher once, start **CDP Chrome**, and sign into the desired Cloud account:
 
 ```bash
 fastcdp-setup
+gclientid --cdp-chrome
 ```
 
-Start the installed **CDP Chrome** launcher and sign in to the Google accounts you want to use. Add `--cdp-chrome` to every command below.
+CDP Chrome uses a separate profile and does not show a connection-approval prompt.
 
-## 2. Create the project and OAuth client
-
-The default `google-apps` preset requests broad access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, and Slides. Run:
+### 2. Create the project and OAuth client
 
 ```bash
 gclientid
 ```
 
-Choose a different preset during setup when needed:
+This creates a globally unique `gclientids-*` project through the signed-in Cloud Console, enables its APIs, configures its branding, consent screen, and scopes, publishes an External app as an unverified production application, and creates a Web OAuth client registered with both `http://127.0.0.1:53682/` and `https://oauth.appapis.org/redirect`. No existing token is needed.
 
-- `max` is the broadest built-in preset. It combines `google-apps`, `developer`, and `workspace-admin`.
+Complete any Google terms screen that appears, or allow gclientid to accept it:
+
+```bash
+gclientid --accept-terms
+```
+
+Provisioning writes `config.ini` and `oauth-client.json`. It does **not** grant access to Gmail or create a token.
+
+When an existing gclientid token has `cloud-platform` access, `--owner` instead creates and configures the project through Resource Manager and Service Usage:
+
+```bash
+gclientid --owner me@example.com
+```
+
+Chrome must also be signed into that account so gclientid can require the same support/contact email. API provisioning grants the owner explicit Service Usage Consumer access. `--internal` requires this path because the owner token resolves the Workspace organization.
+
+To prepare an owner token during an initial External setup, request the `developer` preset and authorize in the same run:
+
+```bash
+gclientid --preset developer --authorize --account me@example.com
+```
+
+### 3. Authorize a Google account when needed
+
+```bash
+gclientid-auth --account me@example.com
+```
+
+`gclientid-auth` connects to your normal Chrome, opens the authorization there, advances Google's account and consent screens once, and receives the result automatically through a one-shot listener bound only to `127.0.0.1:53682`. Chrome asks you to approve the debugging connection. Complete any passkey or other browser-native security prompt Google requires.
+
+Use the dedicated CDP Chrome profile instead with:
+
+```bash
+gclientid-auth --account me@example.com --cdp-chrome
+```
+
+The authorized data account can differ from the Cloud Console account that owns the project. `--account` supplies a Google login hint and verifies the returned identity before the token is saved.
+
+For SSH sessions or containers where the CLI and browser are on different machines:
+
+```bash
+gclientid-auth --account me@example.com --remote
+```
+
+The URL is printed and opened in the default browser. Click **Copy** on the appapis result page and paste its compact `code=...&state=...` result into the waiting CLI. Add `--no-open-browser` when the browser is on another machine. The PKCE verifier remains on the machine running gclientid.
+
+To provision and immediately authorize in one invocation:
+
+```bash
+gclientid --authorize --account me@example.com
+```
+
+The same Chrome connection handles setup and authorization. Add `--cdp-chrome` for the dedicated profile or `--remote` to close the setup browser and use appapis copy/paste for authorization.
+
+## Access presets
+
+The default `google-apps` preset requests broad access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, and Slides.
+
 - `gmail` requests identity information and unrestricted Gmail access.
-- `developer` adds `cloud-platform` to `google-apps`. Google Cloud access remains limited by the authorized account's IAM roles.
-- `workspace-admin` adds Workspace Admin SDK access to `google-apps`. Admin operations remain limited by the authorized account's Workspace privileges.
+- `workspace-addon` requests identity and Google Cloud access and enables the APIs needed to manage Workspace add-on deployments.
+- `developer` combines `google-apps` with `cloud-platform`. Cloud access remains limited by the authorized account's IAM roles.
+- `workspace-admin` combines `google-apps` with broad Admin SDK scopes. Admin operations remain limited by the account's Workspace privileges.
+- `max` combines `google-apps`, `developer`, and `workspace-admin`. It is every scope and API in gclientid's built-in presets, not every API Google offers.
+
+Choose a preset while provisioning; `gclientid-auth` remembers it:
 
 ```bash
 gclientid --preset max
-gclientid --preset gmail
-gclientid --preset developer
 gclientid --preset workspace-admin
 ```
 
-`max` means every scope and API included in a gclientid preset. It does not mean every API offered by Google. Use custom scopes and APIs for products outside the built-in sets.
-
-Add scopes and APIs that are not in a preset with repeatable `--scope` and `--api` options:
+Override it during authorization or add custom scopes and APIs:
 
 ```bash
+gclientid-auth --account me@example.com --preset gmail
 gclientid --scope https://www.googleapis.com/auth/forms.body --api forms.googleapis.com
 ```
 
-`gclientid` saves the selected preset and additions for later use by `gclientid-auth`.
+Repeat `--scope` and `--api` as needed.
 
-Add `--cdp-chrome` when using CDP Chrome. `gclientid` creates a dedicated Google Cloud project with a unique `gclientids-*` project ID. It configures the project's OAuth branding, consent screen, audience, scopes, and APIs. It publishes the unverified application and creates a Desktop OAuth client ID.
+### Internal Workspace applications
 
-The Google account active in Cloud Console owns the project and OAuth client. Complete any Google terms screen that appears in the browser. Pass `--accept-terms` to submit that screen automatically.
-
-This step creates `oauth-client.json`. It does not grant access to a Google account or create an access token.
-
-## 3. Authorize a Google account (optional)
-
-Authorization creates the refresh token that another local program can use to access Google APIs. You can authorize during initial setup:
+Use `--internal` when every user belongs to the Cloud project's Google Workspace or Cloud Identity organization:
 
 ```bash
-gclientid --authorize
+gclientid --owner me@example.com --internal --preset workspace-addon
+gclientid-auth --internal --account me@example.com
 ```
 
-You can also authorize later with the separate command:
-
-```bash
-gclientid-auth
-```
-
-Add `--cdp-chrome` to either command when using CDP Chrome. Use `--account name@example.com` to select and verify an account by email or display name. `gclientid-auth` reads the existing OAuth client and does not require Cloud Console access. The authorized data account can differ from the account that owns the Cloud project.
-
-Google can require a passkey or Touch ID before granting broad scopes, even when the account is already signed in. Chrome can then ask whether to create a Chrome profile for that Google account. Complete these browser-native prompts yourself; CDP cannot read or submit them.
-
-Google issues access tokens for about one hour. The saved refresh token obtains new access tokens without repeating consent. On later authorization, `gclientid` retains the matching saved refresh token when Google only returns a new access token. It retries with explicit consent only when no refresh token is available. A production refresh token has no fixed expiry, but Google invalidates it after six months without use or after events such as revocation and some account security changes.
+The owner email's domain is resolved to its Cloud organization through Resource Manager, and the project is created under it. Internal credentials are kept alongside, rather than replacing, the default External profile: `config-internal.ini`, `oauth-client-internal.json`, and `oauth-token-<account>-internal.json`.
 
 ## Stored files
 
-`gclientid` stores configuration and credentials under `$XDG_CONFIG_HOME/gclientid/`. The default is `~/.config/gclientid/`:
+Credentials and settings live directly under `$XDG_CONFIG_HOME/gclientid/`, normally `~/.config/gclientid/`:
 
 ```text
 config.ini
 oauth-client.json
-oauth-token.json
+oauth-token-alice@example.com.json
+oauth-token-bob@example.com.json
+config-internal.ini
+oauth-client-internal.json
+oauth-token-alice@example.com-internal.json
 ```
 
-`config.ini` records the project, name, preset, and custom scopes and APIs. `oauth-client.json` is Google's unmodified Desktop client file. `oauth-token.json` is only created by authorization. Both credential JSON files use mode `0600`.
+`config.ini` records the project, application name, preset, and custom scopes/APIs. `oauth-client.json` contains Google's Web client configuration. Each verified account gets its own `oauth-token-<account>.json` in google-auth's authorized-user format. Credential JSON files are written with mode `0600`.
 
-Pass `--output` to either command to use a different directory. Provisioning never overwrites existing credential files. Successful authorization replaces `oauth-token.json`.
+Libraries such as [fastgws](https://answerdotai.github.io/fastgws/) can use the standard account location directly:
 
-Run `gclientid --help` or `gclientid-auth --help` for all options.
+```python
+from fastgws.auth import oauth_creds
+
+creds = await oauth_creds(account='alice@example.com')
+```
+
+Pass `--output` to either command to use another credential directory. Provisioning refuses to overwrite existing credentials; successful authorization replaces only the selected account's token.
+
+## How authorization is protected
+
+Every authorization request uses a fresh random `state` and PKCE verifier. The verifier stays in the waiting gclientid process. `oauth.appapis.org` only displays the short-lived callback parameters needed by the CLI: `code` and `state`, or Google's error fields. gclientid validates `state` before exchanging the single-use code.
+
+Google access tokens normally last about one hour. The saved refresh token obtains replacements automatically. Production refresh tokens have no fixed lifetime, but Google can invalidate one after six months without use, explicit revocation, account security changes, or other security events.
+
+Before opening OAuth, gclientid checks that a saved refresh token matches the client, account, and requested scopes, then verifies it with Google's token endpoint. If it is missing or unusable, the first authorization request includes explicit consent. Otherwise Google may omit a new refresh token and gclientid retains the verified one. Authorization always uses one browser/copy-paste round trip; it never launches a second consent flow.
+
+## Personal, unverified applications
+
+The intended setup is one Cloud project and OAuth client per developer or small team. gclientid configures an **External**, **In production**, unverified application. Google warns that sensitive or restricted scopes require verification, but an unverified personal-use application can still authorize up to 100 distinct users over its lifetime. Verification is needed to remove the warning or exceed that cap.
+
+Do not leave a Gmail application in **Testing**: test users need an allowlist, and grants involving Gmail expire after seven days. An unverified production application avoids both limitations.
+
+Google may still require a passkey or Touch ID for a broad grant even when the account is already signed in. Those are browser-native security decisions; complete them in the browser. An immediate repeat often reuses Google's recent authentication and does not prompt again.
 
 ## Python API
 
-`gclientid` uses an existing signed-in [fastcdp](https://github.com/AnswerDotAI/fastcdp) Chrome session. Enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, then create a globally unique project ID, provision its Desktop OAuth client, and authorize the data account:
+Project creation and API enablement use fastgws:
 
 ```python
-from gclientid import authorize_google, connect_browser, create_client, create_project
+from gclientid import connect_browser, create_client, provision_project
+
+project_id = 'gclientids-your-unique-suffix'
+await provision_project(
+    'me@example.com', project_id, name='gclientids', domain='example.com',
+    apis=['cloudresourcemanager.googleapis.com', 'gsuiteaddons.googleapis.com'])
 
 cdp, page = await connect_browser()
-project_id = 'gclientids-your-unique-suffix'
-
-await create_project(page, project_id, name='gclientids')
-await create_client(page, project_id, 'oauth-client.json')
-await authorize_google(cdp, 'oauth-client.json', 'oauth-token.json', account='j@answer.ai')
+await create_client(page, project_id, 'oauth-client-internal.json', internal=True,
+    support_email='me@example.com')
 ```
 
-`connect_browser()` uses the normal Chrome profile by default. Chrome gives you 60 seconds to approve the debugging connection. The function opens a new tab instead of navigating the currently focused tab. To use the separate CDP Chrome profile on port 9223 instead, run `fastcdp-setup` once, start its CDP Chrome launcher, and connect with:
+`connect_browser()` targets normal Chrome and gives the user up to 60 seconds to approve the debugging connection. Use the dedicated profile with `connect_browser(default_browser=False)`.
+
+Authorization can reuse an existing CDP connection; without one it opens the system's default browser and still receives the local callback automatically:
 
 ```python
-cdp, page = await connect_browser(default_browser=False)
+from gclientid import authorize_google
+
+token = await authorize_google(
+    'oauth-client.json',
+    'oauth-token.json',
+    preset='google-apps',
+    account='me@example.com')
 ```
 
-`create_client` enables the APIs required by its preset, configures an External OAuth application, adds its scopes, publishes the unverified application, creates a Desktop client, and writes Google's installed-app client JSON. It selects an email offered by the Cloud Console account for the support and contact fields.
+Pass `cdp=cdp` to open the flow in a particular CDP browser, or `remote=True` to print the appapis URL and read its copied result. Both paths verify the account and write the same standard authorized-user token.
 
-The default preset is `google-apps`. `developer` adds `cloud-platform`; `workspace-admin` adds broad Admin SDK scopes; and `gmail` requests only identity and unrestricted Gmail access. Additional scopes and API service names can be supplied with `scopes=` and `apis=`. Cloud and Workspace administration remain limited to permissions already held by the authorized data account.
-
-On a new Google Auth Platform application, `create_client` pauses at Google's API Services terms screen. Complete that visible screen in Chrome and the function continues. Pass `accept_terms=True` to accept and submit that screen automatically:
-
-```python
-await create_client(page, project_id, 'oauth-client.json', accept_terms=True)
-```
-
-`authorize_google` opens Google's account and consent screens in a new Chrome tab. It selects the account automatically when Google offers one existing account, then approves the requested access. When Google offers multiple existing accounts, select the data account by display name or email substring:
-
-```python
-await authorize_google(cdp, 'oauth-client.json', 'oauth-token.json', account='j@answer.ai')
-```
-
-The function uses a PKCE loopback flow and writes the authorized account, access token, refresh token, granted scopes, client ID, and creation time to `oauth-token.json`.
-
-Both JSON files are created with mode `0600`. `create_client` refuses to overwrite an existing client file because Google only exposes the Desktop client secret at creation time. `authorize_google` replaces the token file when authorization succeeds. Keep both files out of git.
-
-Project deletion is also available. Google keeps a deleted project recoverable for 30 days:
+Project deletion is also available. Google treats this as a recoverable shutdown for 30 days:
 
 ```python
 from gclientid import delete_project
 
-await delete_project(page, project_id)
+await delete_project('me@example.com', project_id)
 ```
 
-See the [privacy policy](PRIVACY.md) for how Google user data is handled.
-
-## Personal OAuth applications
-
-The intended setup is one Google Cloud project and Desktop OAuth client per
-developer. Configure its audience as **External**, publish it **In production**,
-and leave it unverified. Google may say that the app "requires verification",
-but personal-use applications can still authorize up to 100 distinct users.
-Users see an unverified-app warning during initial authorization; verification
-is only needed to remove that warning or exceed the lifetime user cap.
-
-Do not leave a continuously running application in **Testing**. Testing requires
-an explicit test-user email list, and authorizations requesting Gmail access
-expire after seven days. An unverified app that is In production needs neither
-the allowlist nor seven-day reauthorization.
-
-The default preset includes restricted Gmail and Drive scopes alongside broad
-Calendar, Contacts, Tasks, and identity scopes. The unrestricted Gmail scope is
-`https://mail.google.com/`; it allows reading, composing, sending, and
-permanently deleting mail. Every scope must be requested during authorization
-even when it is already listed on the Google Auth Platform Data Access page.
-
-Google currently requires a Desktop client's `client_secret` during the token
-exchange, including when PKCE is used. The secret is shown only when the client
-is created, so capture or download the client JSON immediately. Desktop software
-cannot keep this value confidential, but it must still be kept out of git along
-with user access and refresh tokens.
+See [DEV.md](DEV.md) for the API and remaining Cloud Console implementation details, and [PRIVACY.md](PRIVACY.md) for the privacy policy.
 
 ## Development
 
@@ -185,21 +222,7 @@ with user access and refresh tokens.
 pip install -e .[dev]
 ```
 
-## Versioning
-
-Version lives in `gclientid/__init__.py` as `__version__`.
-Bump it with:
-
-```bash
-ship-bump --part 2   # patch
-ship-bump --part 1   # minor
-ship-bump --part 0   # major
-```
-
-## Release
-
-1) Ensure your GitHub issues are labeled (`bug`, `enhancement`, `breaking`).
-2) Run:
+Version lives in `gclientid/__init__.py`. Releases use:
 
 ```bash
 ship-release
