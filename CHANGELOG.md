@@ -1,5 +1,17 @@
 <!-- do not remove -->
 
+## 0.1.3
+
+### New Features
+
+- Add bootstrap provisioning and flexible Google authorization ([#10](https://github.com/AnswerDotAI/gclientid/pull/10)), thanks to [@jph00](https://github.com/jph00)
+- Add maximum-access OAuth and minimize reauthentication ([#9](https://github.com/AnswerDotAI/gclientid/pull/9)), thanks to [@jph00](https://github.com/jph00)
+
+### Bugs Squashed
+
+- Validate credential output before Google-side actions ([#11](https://github.com/AnswerDotAI/gclientid/pull/11)), thanks to [@jph00](https://github.com/jph00)
+
+
 ## 0.1.2
 
 ### New Features
