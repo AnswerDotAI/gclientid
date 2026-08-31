@@ -1,4 +1,4 @@
-from gclientid.cli import _paths, _token_path, _token_paths
+from gclientid.cli import _paths, _check_output_writable, _token_path, _token_paths
 from gclientid.config import oauth_settings
 from gclientid.oauth import CLOUD_SCOPES, oauth_config
 
@@ -15,6 +15,12 @@ def test_internal_paths(tmp_path):
     assert _token_paths(tmp_path) == [normal]
     assert _token_paths(tmp_path, internal=True) == [internal]
     assert oauth_settings(tmp_path, internal=True).config_file == tmp_path/'config-internal.ini'
+
+
+def test_output_writable(tmp_path):
+    output = tmp_path/'new'
+    _check_output_writable(output)
+    assert output.is_dir() and not any(output.iterdir())
 
 
 def test_workspace_addon_preset():
