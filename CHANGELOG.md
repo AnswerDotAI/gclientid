@@ -1,5 +1,12 @@
 <!-- do not remove -->
 
+## 0.1.4
+
+### New Features
+
+- Add Enterprise License Manager scope and API to workspace-admin and max presets; auto-dismiss Chrome managed-profile notice during OAuth ([#12](https://github.com/AnswerDotAI/gclientid/issues/12))
+
+
 ## 0.1.3
 
 ### New Features
