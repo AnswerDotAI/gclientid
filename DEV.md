@@ -25,7 +25,7 @@ Provisioning writes `config.ini` using `fastcore.xdg.Config`. It records the pro
 
 Authorization stores one `oauth-token-<account>.json` per verified Google account. Email characters safe in filenames remain readable; other characters are percent-encoded. Token files use google-auth's authorized-user format with the verified `account` field retained.
 
-The `max` preset is the union of `google-apps`, `developer`, and `workspace-admin`. It is the broadest built-in preset, not every scope and API offered by Google.
+The `max` preset is the union of `google-apps`, `developer`, and `workspace-admin`. It is the broadest built-in preset, not every scope and API offered by Google. `workspace-admin` includes the Enterprise License Manager API and its read/write licensing scope.
 
 Without `--owner`, project creation and API enablement use the signed-in Console and need no prior gclientid credentials. The `--owner` token selects API provisioning instead. For an Internal app, its email domain selects the single visible Cloud organization and the project is created under that organization; Internal provisioning therefore requires `--owner`. The same email must be offered as a support address in the active Console session, preventing accidental client creation under a different login. `--account` on `gclientid-auth` or combined `gclientid --authorize` selects the separate data account during OAuth. The provisioning CLI checks both destination credential files before creating the Cloud project, closes its setup tab and CDP connection on success or failure, and never prints client secrets or OAuth tokens. Provisioning and authorization both confirm the output directory is writable before opening an OAuth flow or mutating Google-side state.
 
@@ -84,7 +84,7 @@ Before opening OAuth, `authorize_google` checks whether the saved refresh token 
 
 The August 27 `max` retest without forced consent still required a passkey and completed in 29.9 seconds after the user satisfied it. An immediate repeat completed in 3.1 seconds without a passkey or Chrome-profile prompt. Both attempts verified `j@answer.ai`, granted all 19 expected scopes, and returned a refresh token. Google therefore appears to require recent authentication for the broad grant rather than passkey authentication on every authorization; forced consent was not the sole trigger.
 
-Broad scope grants can still trigger a native passkey or Touch ID prompt, followed by Chrome's prompt to create a browser profile for the web login. The user completes these browser-native controls while the CLI waits for the copied callback.
+Broad scope grants can still trigger a native passkey or Touch ID prompt. The user completes those browser-native controls while the CLI waits for the callback. A Workspace login can also open `chrome://managed-user-profile-notice/`; `_open_cdp` watches Chrome targets during authorization, selects **Use Chrome without an account**, and reactivates the OAuth tab so that profile creation does not stall the flow.
 
 Resource Manager deletion is a soft deletion: the project becomes inaccessible
 immediately but remains recoverable for 30 days before permanent deletion.

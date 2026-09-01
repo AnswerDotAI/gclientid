@@ -20,15 +20,16 @@ CLOUD_APIS = tuple(f'{o}.googleapis.com' for o in 'cloudresourcemanager serviceu
 WORKSPACE_ADDON_APIS = (*CLOUD_APIS, 'gsuiteaddons.googleapis.com')
 WORKSPACE_ADMIN_SCOPES = _auth_scopes('admin.directory.user admin.directory.group admin.directory.orgunit admin.directory.domain')
 WORKSPACE_ADMIN_SCOPES += _auth_scopes(
-    'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly')
+    'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly apps.licensing')
+WORKSPACE_ADMIN_APIS = ('admin.googleapis.com', 'licensing.googleapis.com')
 MAX_SCOPES = GOOGLE_APPS_SCOPES + CLOUD_SCOPES + WORKSPACE_ADMIN_SCOPES
-MAX_APIS = GOOGLE_APPS_APIS + CLOUD_APIS + ('admin.googleapis.com',)
+MAX_APIS = GOOGLE_APPS_APIS + CLOUD_APIS + WORKSPACE_ADMIN_APIS
 PRESETS = {}
 PRESETS['gmail'] = dict(scopes=(*IDENTITY_SCOPES, GMAIL_SCOPE), apis=('gmail.googleapis.com',))
 PRESETS['workspace-addon'] = dict(scopes=(*IDENTITY_SCOPES, *CLOUD_SCOPES), apis=WORKSPACE_ADDON_APIS)
 PRESETS['google-apps'] = dict(scopes=GOOGLE_APPS_SCOPES, apis=GOOGLE_APPS_APIS)
 PRESETS['developer'] = dict(scopes=GOOGLE_APPS_SCOPES + CLOUD_SCOPES, apis=GOOGLE_APPS_APIS + CLOUD_APIS)
-PRESETS['workspace-admin'] = dict(scopes=GOOGLE_APPS_SCOPES + WORKSPACE_ADMIN_SCOPES, apis=(*GOOGLE_APPS_APIS, 'admin.googleapis.com'))
+PRESETS['workspace-admin'] = dict(scopes=GOOGLE_APPS_SCOPES + WORKSPACE_ADMIN_SCOPES, apis=GOOGLE_APPS_APIS + WORKSPACE_ADMIN_APIS)
 PRESETS['max'] = dict(scopes=MAX_SCOPES, apis=MAX_APIS)
 
 
@@ -48,6 +49,7 @@ CERT_URI = 'https://www.googleapis.com/oauth2/v1/certs'
 LOCAL_REDIRECT_URI = 'http://127.0.0.1:53682/'
 REMOTE_REDIRECT_URI = 'https://oauth.appapis.org/redirect'
 REDIRECT_URIS = (LOCAL_REDIRECT_URI, REMOTE_REDIRECT_URI)
+MANAGED_PROFILE_NOTICE = 'chrome://managed-user-profile-notice/'
 
 
 async def connect_browser(
@@ -338,15 +340,58 @@ async def _drive_oauth(page, account, timeout):
     if tree and (allow := tree.find('button', 'Allow')): await page.dom_click(allow.find_id())
 
 
+async def _dismiss_managed_profile_notice(cdp, target_id, return_target, timeout):
+    "Dismiss Chrome's offer to turn a Workspace web login into a managed browser profile."
+    notice = await cdp.attach_page(target_id)
+    tree = await notice.wait_for_ax('button', 'Use Chrome without an account', timeout=timeout)
+    await notice.dom_click(tree.find_id('button', 'Use Chrome without an account'))
+    await cdp.target.activateTarget(targetId=return_target)
+
+
+async def _watch_managed_profile_notices(cdp, return_target, timeout):
+    "Dismiss managed-profile notices for the duration of a CDP OAuth flow."
+    seen = set()
+    try:
+        async with cdp.on('Target.targetCreated', 'Target.targetInfoChanged') as events:
+            await cdp.target.setDiscoverTargets(discover=True)
+
+            async def handle(info):
+                if info.get('type') != 'page' or info.get('url') != MANAGED_PROFILE_NOTICE: return
+                target_id = info['targetId']
+                if target_id in seen: return
+                seen.add(target_id)
+                await _dismiss_managed_profile_notice(cdp, target_id, return_target, timeout)
+
+            for info in await cdp('Target.getTargets'): await handle(info)
+            while True: await handle((await events.get())['params']['targetInfo'])
+    finally:
+        try: await cdp.target.setDiscoverTargets(discover=False)
+        except (RuntimeError, TimeoutError): pass
+
+
 async def _open_cdp(cdp, auth_url, account, timeout):
     "Open an authorization URL in CDP Chrome and wait for its loopback redirect."
     page = await cdp.new_page()
     await cdp.target.activateTarget(targetId=page.t)
-    try:
+    watcher = asyncio.create_task(_watch_managed_profile_notices(cdp, page.t, timeout))
+
+    async def drive():
         await page.page.navigate(url=auth_url)
         await _drive_oauth(page, account, timeout)
         await page.wait_for("location.hostname === '127.0.0.1'", timeout=timeout)
-    finally: await page.close()
+
+    flow = asyncio.create_task(drive())
+    try:
+        done,_ = await asyncio.wait((flow, watcher), return_when=asyncio.FIRST_COMPLETED)
+        if watcher in done: await watcher
+        await flow
+    finally:
+        for task in (flow, watcher):
+            if not task.done(): task.cancel()
+        for task in (flow, watcher):
+            try: await task
+            except asyncio.CancelledError: pass
+        await page.close()
 
 
 async def _request_token(client:dict, scopes, account:str, cdp=None, remote:bool=False, open_browser:bool=True,

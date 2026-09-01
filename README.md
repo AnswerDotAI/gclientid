@@ -70,6 +70,8 @@ gclientid-auth --account me@example.com
 
 `gclientid-auth` connects to your normal Chrome, opens the authorization there, advances Google's account and consent screens once, and receives the result automatically through a one-shot listener bound only to `127.0.0.1:53682`. Chrome asks you to approve the debugging connection. Complete any passkey or other browser-native security prompt Google requires.
 
+When a Workspace login makes Chrome offer to create a managed browser profile, gclientid selects **Use Chrome without an account** and returns to the authorization tab. This keeps the dedicated CDP profile usable with multiple Google accounts. Native passkey and Touch ID prompts still require the user.
+
 Use the dedicated CDP Chrome profile instead with:
 
 ```bash
@@ -101,7 +103,7 @@ The default `google-apps` preset requests broad access to Gmail, Drive, Calendar
 - `gmail` requests identity information and unrestricted Gmail access.
 - `workspace-addon` requests identity and Google Cloud access and enables the APIs needed to manage Workspace add-on deployments.
 - `developer` combines `google-apps` with `cloud-platform`. Cloud access remains limited by the authorized account's IAM roles.
-- `workspace-admin` combines `google-apps` with broad Admin SDK scopes. Admin operations remain limited by the account's Workspace privileges.
+- `workspace-admin` combines `google-apps` with broad Admin SDK and Enterprise License Manager access. Admin operations remain limited by the account's Workspace privileges.
 - `max` combines `google-apps`, `developer`, and `workspace-admin`. It is every scope and API in gclientid's built-in presets, not every API Google offers.
 
 Choose a preset while provisioning; `gclientid-auth` remembers it:

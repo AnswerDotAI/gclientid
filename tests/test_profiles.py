@@ -23,7 +23,10 @@ def test_output_writable(tmp_path):
     assert output.is_dir() and not any(output.iterdir())
 
 
-def test_workspace_addon_preset():
+def test_presets():
     scopes,apis = oauth_config('workspace-addon')
     assert set(CLOUD_SCOPES) <= set(scopes)
     assert 'gsuiteaddons.googleapis.com' in apis
+    scopes,apis = oauth_config('max')
+    assert 'https://www.googleapis.com/auth/apps.licensing' in scopes
+    assert 'licensing.googleapis.com' in apis
