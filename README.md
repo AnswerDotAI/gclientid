@@ -208,6 +208,18 @@ token = await authorize_google(
 
 Pass `cdp=cdp` to open the flow in a particular CDP browser, or `remote=True` to print the appapis URL and read its copied result. Both paths verify the account and write the same standard authorized-user token.
 
+Agent tools should use the split flow so they can wait for the user's reply without blocking on `input()`:
+
+```python
+from gclientid import auth_url, finish_auth
+
+url = auth_url('oauth-client.json', 'oauth-token.json', account='me@example.com')
+# Show url to the user. Pass their copied code=...&state=... result back later.
+token = await finish_auth(response)
+```
+
+`auth_url` always uses the PKCE-protected appapis callback and requests explicit consent. Pass `preset=None` with `scopes=[...]` to request only those scopes. `finish_auth` validates the returned state, exchanges the single-use code, verifies the account, and saves the same authorized-user token as `authorize_google`.
+
 Project deletion is also available. Google treats this as a recoverable shutdown for 30 days:
 
 ```python

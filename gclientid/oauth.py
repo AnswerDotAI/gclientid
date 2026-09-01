@@ -33,12 +33,16 @@ PRESETS['workspace-admin'] = dict(scopes=GOOGLE_APPS_SCOPES + WORKSPACE_ADMIN_SC
 PRESETS['max'] = dict(scopes=MAX_SCOPES, apis=MAX_APIS)
 
 
-def oauth_config(preset:str='google-apps', scopes=None, apis=None) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    "Return the deduplicated OAuth scopes and APIs for a preset plus additions"
-    if preset not in PRESETS: raise ValueError(f'Unknown preset {preset!r}; choose from {", ".join(PRESETS)}')
+def oauth_config(
+    preset:str|None='google-apps', # Scope and API preset, or `None` for additions only
+    scopes=None, # Additional OAuth scopes
+    apis=None, # Additional Google API service names
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    "Return deduplicated scopes and APIs for a preset plus additions, or additions alone with no preset"
+    if preset is not None and preset not in PRESETS: raise ValueError(f'Unknown preset {preset!r}; choose from {", ".join(PRESETS)}')
     scopes = () if scopes is None else (scopes,) if isinstance(scopes, str) else tuple(scopes)
     apis = () if apis is None else (apis,) if isinstance(apis, str) else tuple(apis)
-    config = PRESETS[preset]
+    config = PRESETS[preset] if preset is not None else dict(scopes=(), apis=())
     return tuple(dict.fromkeys((*config['scopes'], *scopes))), tuple(dict.fromkeys((*config['apis'], *apis)))
 HOME_URL = 'https://answerdotai.github.io/gclientid/'
 PRIVACY_URL = f'{HOME_URL}privacy/'
@@ -394,28 +398,8 @@ async def _open_cdp(cdp, auth_url, account, timeout):
         await page.close()
 
 
-async def _request_token(client:dict, scopes, account:str, cdp=None, remote:bool=False, open_browser:bool=True,
-    force_consent:bool=False, timeout:int=600) -> dict:
-    "Run one Google authorization and token exchange"
-    redirect_uri = REMOTE_REDIRECT_URI if remote else LOCAL_REDIRECT_URI
-    auth_url,verifier,state,redirect_uri = _auth_request(client, scopes, account, redirect_uri, force_consent)
-    if remote:
-        print(f'Open this URL in a browser:\n\n{auth_url}\n')
-        if open_browser: webbrowser.open(auth_url)
-        payload = input('Paste the result from oauth.appapis.org: ')
-    else:
-        callback = asyncio.create_task(_local_callback(timeout))
-        try:
-            if cdp: browser = asyncio.create_task(_open_cdp(cdp, auth_url, account, timeout))
-            else:
-                webbrowser.open(auth_url)
-                browser = None
-            if browser: payload,_ = await asyncio.gather(callback, browser)
-            else: payload = await callback
-        finally:
-            if not callback.done(): callback.cancel()
-    code = _callback_code(payload, state)
-
+async def _exchange_code(client, code, verifier, redirect_uri, account):
+    "Exchange an authorization code and verify the returned Google account"
     async with httpx.AsyncClient(timeout=10) as http:
         data = dict(client_id=client['client_id'], client_secret=client['client_secret'], code=code,
             code_verifier=verifier, redirect_uri=redirect_uri, grant_type='authorization_code')
@@ -432,12 +416,83 @@ async def _request_token(client:dict, scopes, account:str, cdp=None, remote:bool
     return token
 
 
+async def _request_token(client:dict, scopes, account:str, cdp=None, remote:bool=False, open_browser:bool=True,
+    force_consent:bool=False, timeout:int=600) -> dict:
+    "Run one Google authorization and token exchange"
+    redirect_uri = REMOTE_REDIRECT_URI if remote else LOCAL_REDIRECT_URI
+    url,verifier,state,redirect_uri = _auth_request(client, scopes, account, redirect_uri, force_consent)
+    if remote:
+        print(f'Open this URL in a browser:\n\n{url}\n')
+        if open_browser: webbrowser.open(url)
+        payload = input('Paste the result from oauth.appapis.org: ')
+    else:
+        callback = asyncio.create_task(_local_callback(timeout))
+        try:
+            if cdp: browser = asyncio.create_task(_open_cdp(cdp, url, account, timeout))
+            else:
+                webbrowser.open(url)
+                browser = None
+            if browser: payload,_ = await asyncio.gather(callback, browser)
+            else: payload = await callback
+        finally:
+            if not callback.done(): callback.cancel()
+    code = _callback_code(payload, state)
+    return await _exchange_code(client, code, verifier, redirect_uri, account)
+
+
 def _matching_refresh(previous, client, scopes, account):
     "Return a matching saved refresh token that covers the requested scopes"
     if previous.get('client_id') != client['client_id']: return
     if account and previous.get('account', '').casefold() != account.casefold(): return
     if not set(scopes).issubset(previous.get('scopes', ())): return
     return previous.get('refresh_token')
+
+_pending_auth = None
+
+
+def auth_url(
+    client_path:str|Path='oauth-client.json', # Web client JSON from create_client
+    token_path:str|Path='oauth-token.json', # Destination for access and refresh token JSON
+    preset:str|None='google-apps', # Scope preset, or `None` to use only `scopes`
+    scopes=None, # Additional OAuth scopes
+    account:str=None, # Google account email hint and verification
+):
+    "Start remote Google authorization and return its URL; complete with `finish_auth`"
+    global _pending_auth
+    client = json.loads(Path(client_path).read_text())['web']
+    token_path = Path(token_path)
+    previous = json.loads(token_path.read_text()) if token_path.exists() else {}
+    scopes,_ = oauth_config(preset, scopes)
+    account = account or previous.get('account')
+    refresh = _matching_refresh(previous, client, scopes, account)
+    url,verifier,state,redirect_uri = _auth_request(
+        client, scopes, account, REMOTE_REDIRECT_URI, force_consent=True)
+    _pending_auth = dict(client=client, token_path=token_path, scopes=scopes, account=account,
+        refresh=refresh, verifier=verifier, state=state, redirect_uri=redirect_uri)
+    return url
+
+
+def _save_token(token, client, token_path, refresh):
+    "Save a completed OAuth token response in authorized-user format"
+    if not token.get('refresh_token'):
+        if not refresh: raise RuntimeError('Google did not return a refresh token after explicit consent')
+        token['refresh_token'] = refresh
+    token['created_at'] = datetime.now(timezone.utc).isoformat()
+    token = _authorized_user(token, client)
+    _write_json(token_path, token)
+    return token
+
+
+async def finish_auth(payload):
+    "Validate a copied appapis result, exchange its code, and save the authorized-user token"
+    global _pending_auth
+    if _pending_auth is None: raise RuntimeError('No OAuth flow in progress; call `auth_url` first')
+    pending = _pending_auth
+    code = _callback_code(payload, pending['state'])
+    _pending_auth = None
+    token = await _exchange_code(pending['client'], code, pending['verifier'],
+        pending['redirect_uri'], pending['account'])
+    return _save_token(token, pending['client'], pending['token_path'], pending['refresh'])
 
 
 async def _reusable_refresh(previous, client, scopes, account):
@@ -469,10 +524,4 @@ async def authorize_google(
     account = account or previous.get('account')
     refresh = await _reusable_refresh(previous, client, scopes, account)
     token = await _request_token(client, scopes, account, cdp, remote, open_browser, force_consent=not refresh)
-    if not token.get('refresh_token'):
-        if not refresh: raise RuntimeError('Google did not return a refresh token after explicit consent')
-        token['refresh_token'] = refresh
-    token['created_at'] = datetime.now(timezone.utc).isoformat()
-    token = _authorized_user(token, client)
-    _write_json(token_path, token)
-    return token
+    return _save_token(token, client, token_path, refresh)
