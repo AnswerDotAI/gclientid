@@ -3,52 +3,57 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-import httpx
+import httpx2
 from fastcdp import CDP, Page
+from fastcore.basics import listify
 
 
 GMAIL_SCOPE = 'https://mail.google.com/'
 AUTH_SCOPE = 'https://www.googleapis.com/auth/'
 def _auth_scopes(names): return tuple(f'{AUTH_SCOPE}{o}' for o in names.split())
-
-IDENTITY_SCOPES = ('openid', *_auth_scopes('userinfo.email userinfo.profile'))
-GOOGLE_APPS_SCOPES = (*IDENTITY_SCOPES, GMAIL_SCOPE,
-    *_auth_scopes('drive calendar contacts contacts.other.readonly directory.readonly tasks'))
-GOOGLE_APPS_APIS = tuple(f'{o}.googleapis.com' for o in 'gmail drive calendar-json people tasks docs sheets slides'.split())
-CLOUD_SCOPES = _auth_scopes('cloud-platform')
-CLOUD_APIS = tuple(f'{o}.googleapis.com' for o in 'cloudresourcemanager serviceusage iam'.split())
-WORKSPACE_ADDON_APIS = (*CLOUD_APIS, 'gsuiteaddons.googleapis.com')
-WORKSPACE_ADMIN_SCOPES = _auth_scopes('admin.directory.user admin.directory.group admin.directory.orgunit admin.directory.domain')
-WORKSPACE_ADMIN_SCOPES += _auth_scopes(
-    'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly apps.licensing')
-WORKSPACE_ADMIN_APIS = ('admin.googleapis.com', 'licensing.googleapis.com')
-MAX_SCOPES = GOOGLE_APPS_SCOPES + CLOUD_SCOPES + WORKSPACE_ADMIN_SCOPES
-MAX_APIS = GOOGLE_APPS_APIS + CLOUD_APIS + WORKSPACE_ADMIN_APIS
-PRESETS = {}
-PRESETS['gmail'] = dict(scopes=(*IDENTITY_SCOPES, GMAIL_SCOPE), apis=('gmail.googleapis.com',))
-PRESETS['workspace-addon'] = dict(scopes=(*IDENTITY_SCOPES, *CLOUD_SCOPES), apis=WORKSPACE_ADDON_APIS)
-PRESETS['google-apps'] = dict(scopes=GOOGLE_APPS_SCOPES, apis=GOOGLE_APPS_APIS)
-PRESETS['developer'] = dict(scopes=GOOGLE_APPS_SCOPES + CLOUD_SCOPES, apis=GOOGLE_APPS_APIS + CLOUD_APIS)
-PRESETS['workspace-admin'] = dict(scopes=GOOGLE_APPS_SCOPES + WORKSPACE_ADMIN_SCOPES, apis=GOOGLE_APPS_APIS + WORKSPACE_ADMIN_APIS)
-PRESETS['max'] = dict(scopes=MAX_SCOPES, apis=MAX_APIS)
+def _apis(names): return tuple(f'{o}.googleapis.com' for o in names.split())
 
 
-def oauth_config(preset:str='google-apps', scopes=None, apis=None) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    "Return the deduplicated OAuth scopes and APIs for a preset plus additions"
+class Preset:
+    "OAuth scopes and the Google APIs they need; `+` unions two presets in order"
+    def __init__(self, scopes=(), apis=()): self.scopes,self.apis = tuple(dict.fromkeys(scopes)),tuple(dict.fromkeys(apis))
+    def __add__(self, o): return Preset(self.scopes + o.scopes, self.apis + o.apis)
+    def __repr__(self): return f'Preset(scopes={len(self.scopes)}, apis={len(self.apis)})'
+
+
+IDENTITY = Preset(('openid', *_auth_scopes('userinfo.email userinfo.profile')))
+GMAIL = IDENTITY + Preset((GMAIL_SCOPE,), _apis('gmail'))
+GOOGLE_APPS = GMAIL + Preset(_auth_scopes('drive calendar contacts contacts.other.readonly directory.readonly tasks'),
+    _apis('drive calendar-json people tasks docs sheets slides'))
+CLOUD = Preset(_auth_scopes('cloud-platform'), _apis('cloudresourcemanager serviceusage iam'))
+WORKSPACE_ADDON = IDENTITY + CLOUD + Preset(apis=_apis('gsuiteaddons'))
+WORKSPACE_ADMIN = Preset(_auth_scopes('admin.directory.user admin.directory.group admin.directory.orgunit admin.directory.domain '
+    'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly apps.licensing'),
+    _apis('admin licensing'))
+MAX = GOOGLE_APPS + CLOUD + WORKSPACE_ADMIN
+PRESETS = {'gmail': GMAIL, 'workspace-addon': WORKSPACE_ADDON, 'google-apps': GOOGLE_APPS, 'developer': GOOGLE_APPS + CLOUD,
+    'workspace-admin': GOOGLE_APPS + WORKSPACE_ADMIN, 'max': MAX}
+
+
+def oauth_config(preset:str='google-apps', scopes=None, apis=None) -> Preset:
+    "The preset's scopes and APIs plus any additions, deduplicated"
     if preset not in PRESETS: raise ValueError(f'Unknown preset {preset!r}; choose from {", ".join(PRESETS)}')
-    scopes = () if scopes is None else (scopes,) if isinstance(scopes, str) else tuple(scopes)
-    apis = () if apis is None else (apis,) if isinstance(apis, str) else tuple(apis)
-    config = PRESETS[preset]
-    return tuple(dict.fromkeys((*config['scopes'], *scopes))), tuple(dict.fromkeys((*config['apis'], *apis)))
+    return PRESETS[preset] + Preset(listify(scopes), listify(apis))
+
+
 HOME_URL = 'https://answerdotai.github.io/gclientid/'
 PRIVACY_URL = f'{HOME_URL}privacy/'
 DOMAIN = 'answerdotai.github.io'
 AUTH_URI = 'https://accounts.google.com/o/oauth2/auth'
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 CERT_URI = 'https://www.googleapis.com/oauth2/v1/certs'
-LOCAL_REDIRECT_URI = 'http://127.0.0.1:53682/'
+LOCAL_PORT = 53682
+LOCAL_REDIRECT_URI = f'http://127.0.0.1:{LOCAL_PORT}/'
 REMOTE_REDIRECT_URI = 'https://oauth.appapis.org/redirect'
-REDIRECT_URIS = (LOCAL_REDIRECT_URI, REMOTE_REDIRECT_URI)
+DEV_PORTS = (5001, 5002, 8000)
+DEV_REDIRECT_URIS = tuple(f'http://{h}:{p}/redirect' for p in DEV_PORTS for h in ('localhost', '127.0.0.1'))
+REDIRECT_URIS = (LOCAL_REDIRECT_URI, REMOTE_REDIRECT_URI, *DEV_REDIRECT_URIS)
+DESKTOP_REDIRECT_URIS = ('http://localhost',)
 MANAGED_PROFILE_NOTICE = 'chrome://managed-user-profile-notice/'
 
 
@@ -90,17 +95,6 @@ async def _wait_saved(page, timeout, label):
     if (await page.ax_tree()).find('dialog', 'Error dialog'): raise RuntimeError(f'Google rejected the OAuth {label} settings')
 
 
-async def _wait_ax_enabled(page, role, name, timeout):
-    "Wait for an AX node to exist without its disabled property, returning its fresh tree"
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        tree = await page.ax_tree()
-        node = tree.find(role, name)
-        if node and not node.props.get('disabled'): return tree
-        await asyncio.sleep(0.2)
-    raise TimeoutError(f'Timed out waiting for enabled AX node role={role!r} name={name!r}')
-
-
 async def _setup_auth(page:Page, project_id:str, name:str, internal:bool, support_email:str, accept_terms:bool, timeout:int, terms_timeout:int):
     await page.goto(f'https://console.cloud.google.com/auth/overview?project={project_id}', timeout=timeout)
     tree = await page.wait_for_ax('heading', 'OAuth Overview', timeout=timeout)
@@ -110,7 +104,7 @@ async def _setup_auth(page:Page, project_id:str, name:str, internal:bool, suppor
     await page.click(start.find_id())
     tree = await page.wait_for_ax('heading', 'App Information', timeout=timeout)
     await page.fill_text(tree.find_id('textbox', 'App name'), name)
-    tree = await _wait_ax_enabled(page, 'combobox', 'User support email', timeout)
+    tree = await page.wait_for_ax('combobox', 'User support email', pred=lambda n: not n.props.get('disabled'), timeout=timeout)
     await page.click(tree.find_id('combobox', 'User support email'))
     tree = await page.wait_for_ax('option', timeout=timeout)
     emails = [n.name for n in tree.find_all('option') if '@' in n.name]
@@ -192,59 +186,119 @@ async def _publish(page:Page, project_id:str, timeout:int):
     await page.wait_for_ax(name='In production', timeout=timeout)
 
 
-async def create_client(
+def _form(tree): return tree.find('main').find('form')
+
+
+async def console_account(page:Page, timeout:int=10) -> str:
+    "Email of the Google account signed into the Cloud Console"
+    await page.goto('https://console.cloud.google.com/welcome', timeout=timeout)
+    tree = await page.wait_for_ax('button', 'Account:', timeout=timeout)
+    return tree.find('button', 'Account:').name.rsplit('(', 1)[1].rstrip(')')
+
+
+async def configure_app(
     page:Page, # Signed-in Google Cloud Console page
     project_id:str, # Existing Google Cloud project ID
-    path:str|Path='oauth-client.json', # Destination for Google's Web client JSON
-    name:str='gclientids', # OAuth application and Web client name
-    preset:str='google-apps', # Scope and API preset
-    scopes=None, # Additional OAuth scopes
-    apis=None, # Additional Google API service names
+    name:str='gclientids', # OAuth application name
+    scopes=MAX.scopes, # Scopes to declare on the Data Access page
     internal:bool=False, # Restrict OAuth authorization to the Cloud project's organization?
     support_email:str=None, # Require this support/contact email in the signed-in Console session
     accept_terms:bool=False, # Accept Google's API Services terms without pausing?
     timeout:int=10, # Seconds to wait for each Console operation
     terms_timeout:int=600, # Seconds to wait while the developer handles the terms screen
-) -> dict:
-    "Configure Google OAuth, create a Web client, and save its client JSON"
-    path = Path(path)
-    if path.exists(): raise FileExistsError(path)
-    scopes,_ = oauth_config(preset, scopes, apis)
+):
+    "Idempotently configure the project's OAuth app: audience, branding, declared scopes, and publication"
     await _setup_auth(page, project_id, name, internal, support_email, accept_terms, timeout, terms_timeout)
     await _set_branding(page, project_id, timeout)
     await _set_scopes(page, project_id, scopes, timeout)
     if not internal: await _publish(page, project_id, timeout)
 
-    await page.goto(f'https://console.cloud.google.com/auth/clients/create?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('heading', 'Create OAuth client ID', timeout=timeout)
-    await page.click(tree.find_id('combobox', 'Application type'))
-    tree = await page.wait_for_ax('option', 'Web application', timeout=timeout)
-    await page.click(tree.find_id('option', 'Web application'))
-    tree = await page.wait_for_ax('textbox', 'Name', timeout=timeout)
-    form = tree.find('main').find('form').find('form')
-    await page.fill_text(form.find_id('textbox', 'Name'), name)
-    redirects = tree.find('group', 'Authorized redirect URIs')
-    await page.click(redirects.find_id('button', 'Add URI'))
-    tree = await page.wait_for_ax('textbox', 'URIs 1', timeout=timeout)
-    redirects = tree.find('group', 'Authorized redirect URIs')
-    await page.fill_text(redirects.find_id('textbox', 'URIs 1'), LOCAL_REDIRECT_URI)
-    await page.click(redirects.find_id('button', 'Add URI'))
-    tree = await page.wait_for_ax('textbox', 'URIs 2', timeout=timeout)
-    await page.fill_text(tree.find('group', 'Authorized redirect URIs').find_id('textbox', 'URIs 2'), REMOTE_REDIRECT_URI)
-    tree = await page.ax_tree()
-    await page.click(tree.find('main').find('form').find('form').find_id('button', 'Create'))
-    tree = await page.wait_for_ax('term', 'Client secret', timeout=timeout)
+
+def _redirect_group(tree): return tree.find('group', 'Authorized redirect URIs')
+def _redirect_values(tree): return [c.name for n in _redirect_group(tree).find_all('textbox') for c in n.children]
+
+
+async def _add_redirect_fields(page, tree, uris, timeout):
+    "Add each of `uris` as a new redirect field on a client form, returning the fresh tree"
+    n = len(_redirect_group(tree).find_all('textbox'))
+    for uri in uris:
+        n += 1
+        await page.click(_redirect_group(tree).find_id('button', 'Add URI'))
+        tree = await page.wait_for_ax('textbox', f'URIs {n} ', timeout=timeout)
+        await page.fill_text(_redirect_group(tree).find_id('textbox', f'URIs {n} '), uri)
+        tree = await page.ax_tree()
+    return tree
+
+
+def _created_client(tree):
+    "The completion dialog of a created client, with the id and secret it shows"
     dialog = tree.find('dialog', 'OAuth client created')
     values = [n.name.removeprefix('Copy to clipboard: ') for n in dialog.find_all('button', 'Copy to clipboard:')]
     client_id = next((v for v in values if v.endswith('.apps.googleusercontent.com')), None)
     client_secret = next((v for v in values if v != client_id), None)
     if not client_id or not client_secret: raise RuntimeError('Google did not expose the new client credentials')
-    web = dict(client_id=client_id, project_id=project_id, auth_uri=AUTH_URI, token_uri=TOKEN_URI,
-        auth_provider_x509_cert_url=CERT_URI, client_secret=client_secret, redirect_uris=list(REDIRECT_URIS))
-    config = dict(web=web)
+    return dialog,client_id,client_secret
+
+
+def _client_config(data:dict):
+    "The client dict inside Google's client JSON, and whether it is a Desktop (`installed`) client"
+    desktop = 'installed' in data
+    return data['installed' if desktop else 'web'],desktop
+
+
+async def create_client(
+    page:Page, # Signed-in Google Cloud Console page
+    project_id:str, # Google Cloud project ID whose OAuth app `configure_app` has set up
+    path:str|Path='oauth-client.json', # Destination for Google's client JSON
+    name:str='gclientids', # OAuth client name
+    desktop:bool=False, # Create a Desktop client instead of a Web client?
+    redirects=REDIRECT_URIS, # Authorized redirect URIs of a Web client
+    timeout:int=10, # Seconds to wait for each Console operation
+) -> dict:
+    "Create an OAuth client and save its client JSON, in Google's `web` or `installed` shape"
+    path = Path(path)
+    if path.exists(): raise FileExistsError(path)
+    await page.goto(f'https://console.cloud.google.com/auth/clients/create?project={project_id}', timeout=timeout)
+    tree = await page.wait_for_ax('heading', 'Create OAuth client ID', timeout=timeout)
+    await page.click(tree.find_id('combobox', 'Application type'))
+    app_type = 'Desktop app' if desktop else 'Web application'
+    tree = await page.wait_for_ax('option', app_type, timeout=timeout)
+    await page.click(tree.find_id('option', app_type))
+    tree = await page.wait_for_ax('textbox', 'Name', timeout=timeout)
+    await page.fill_text(_form(tree).find('form').find_id('textbox', 'Name'), name)
+    if not desktop: tree = await _add_redirect_fields(page, tree, redirects, timeout)
+    await page.click(_form(tree).find('form').find_id('button', 'Create'))
+    tree = await page.wait_for_ax('term', 'Client secret', timeout=timeout)
+    dialog,client_id,client_secret = _created_client(tree)
+    client = dict(client_id=client_id, project_id=project_id, auth_uri=AUTH_URI, token_uri=TOKEN_URI, auth_provider_x509_cert_url=CERT_URI,
+        client_secret=client_secret, redirect_uris=list(DESKTOP_REDIRECT_URIS if desktop else redirects))
+    config = {'installed' if desktop else 'web': client}
     _write_json(path, config)
     await page.click(dialog.find_id('button', 'OK'))
     return config
+
+
+async def add_redirects(
+    page:Page, # Signed-in Google Cloud Console page
+    path:str|Path, # Stored Web client JSON
+    redirects=REDIRECT_URIS, # Redirect URIs that must be registered
+    timeout:int=10, # Seconds to wait for each Console operation
+) -> list:
+    "Register any of `redirects` the Web client lacks, in Google and in its JSON; returns the registered list"
+    path = Path(path)
+    data = json.loads(path.read_text())
+    client,desktop = _client_config(data)
+    if desktop: raise ValueError('Desktop clients accept any loopback redirect; only Web clients register URIs')
+    await page.goto(f'https://console.cloud.google.com/auth/clients/{client["client_id"]}?project={client["project_id"]}', timeout=timeout)
+    tree = await page.wait_for_ax('group', 'Authorized redirect URIs', timeout=timeout)
+    current = _redirect_values(tree)
+    missing = [u for u in redirects if u not in current]
+    if missing:
+        tree = await _add_redirect_fields(page, tree, missing, timeout)
+        await page.click_and_wait(_form(tree).find_id('button', 'Save'), timeout=timeout)
+    client['redirect_uris'] = current + missing
+    _write_json(path, data)
+    return client['redirect_uris']
 
 
 def _callback_code(payload, state):
@@ -259,12 +313,16 @@ def _callback_code(payload, state):
     return query['code'][0]
 
 
-def _auth_request(client, scopes, account, redirect_uri=LOCAL_REDIRECT_URI, force_consent=False):
+def _is_loopback(uri): return urlparse(uri).hostname in ('127.0.0.1', 'localhost')
+
+
+def _auth_request(client, scopes, account, redirect_uri=LOCAL_REDIRECT_URI, force_consent=False, desktop=False):
     "Create one PKCE authorization request"
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
     state = secrets.token_urlsafe(24)
-    if redirect_uri not in client['redirect_uris']: raise ValueError(f'OAuth client does not allow {redirect_uri}')
+    if redirect_uri not in client['redirect_uris'] and not (desktop and _is_loopback(redirect_uri)):
+        raise ValueError(f'OAuth client does not allow {redirect_uri}')
     params = dict(client_id=client['client_id'], redirect_uri=redirect_uri, response_type='code', scope=' '.join(scopes),
         access_type='offline', include_granted_scopes='true', code_challenge=challenge, code_challenge_method='S256', state=state)
     if force_consent: params['prompt'] = 'consent'
@@ -272,8 +330,8 @@ def _auth_request(client, scopes, account, redirect_uri=LOCAL_REDIRECT_URI, forc
     return 'https://accounts.google.com/o/oauth2/v2/auth?' + urlencode(params),verifier,state,redirect_uri
 
 
-async def _local_callback(timeout):
-    "Listen once on the registered loopback redirect and return its query string."
+async def _start_callback(port):
+    "Start a one-shot loopback listener; returns the server, its port, and a future for the callback query string"
     callback = asyncio.get_running_loop().create_future()
 
     async def receive(reader, writer):
@@ -294,12 +352,9 @@ async def _local_callback(timeout):
         writer.close()
         await writer.wait_closed()
 
-    try: server = await asyncio.start_server(receive, '127.0.0.1', 53682)
-    except OSError as e: raise RuntimeError('Local OAuth callback port 53682 is busy; retry with --remote') from e
-    try: return await asyncio.wait_for(callback, timeout)
-    finally:
-        server.close()
-        await server.wait_closed()
+    try: server = await asyncio.start_server(receive, '127.0.0.1', port)
+    except OSError as e: raise RuntimeError(f'Local OAuth callback port {port} is busy; retry with --remote') from e
+    return server,server.sockets[0].getsockname()[1],callback
 
 
 async def _oauth_stage(page, labels, timeout):
@@ -395,28 +450,30 @@ async def _open_cdp(cdp, auth_url, account, timeout):
 
 
 async def _request_token(client:dict, scopes, account:str, cdp=None, remote:bool=False, open_browser:bool=True,
-    force_consent:bool=False, timeout:int=600) -> dict:
+    force_consent:bool=False, timeout:int=600, desktop:bool=False) -> dict:
     "Run one Google authorization and token exchange"
-    redirect_uri = REMOTE_REDIRECT_URI if remote else LOCAL_REDIRECT_URI
-    auth_url,verifier,state,redirect_uri = _auth_request(client, scopes, account, redirect_uri, force_consent)
     if remote:
+        if desktop: raise ValueError('Desktop clients cannot use the appapis remote redirect; authorize locally')
+        auth_url,verifier,state,redirect_uri = _auth_request(client, scopes, account, REMOTE_REDIRECT_URI, force_consent)
         print(f'Open this URL in a browser:\n\n{auth_url}\n')
         if open_browser: webbrowser.open(auth_url)
         payload = input('Paste the result from oauth.appapis.org: ')
     else:
-        callback = asyncio.create_task(_local_callback(timeout))
+        server,port,callback = await _start_callback(0 if desktop else LOCAL_PORT)
+        waiter = asyncio.create_task(asyncio.wait_for(callback, timeout))
         try:
-            if cdp: browser = asyncio.create_task(_open_cdp(cdp, auth_url, account, timeout))
+            auth_url,verifier,state,redirect_uri = _auth_request(client, scopes, account, f'http://127.0.0.1:{port}/', force_consent, desktop)
+            if cdp: payload,_ = await asyncio.gather(waiter, _open_cdp(cdp, auth_url, account, timeout))
             else:
                 webbrowser.open(auth_url)
-                browser = None
-            if browser: payload,_ = await asyncio.gather(callback, browser)
-            else: payload = await callback
+                payload = await waiter
         finally:
-            if not callback.done(): callback.cancel()
+            if not waiter.done(): waiter.cancel()
+            server.close()
+            await server.wait_closed()
     code = _callback_code(payload, state)
 
-    async with httpx.AsyncClient(timeout=10) as http:
+    async with httpx2.AsyncClient(timeout=10) as http:
         data = dict(client_id=client['client_id'], client_secret=client['client_secret'], code=code,
             code_verifier=verifier, redirect_uri=redirect_uri, grant_type='authorization_code')
         response = await http.post(TOKEN_URI, data=data)
@@ -445,30 +502,30 @@ async def _reusable_refresh(previous, client, scopes, account):
     refresh = _matching_refresh(previous, client, scopes, account)
     if not refresh: return
     data = dict(client_id=client['client_id'], client_secret=client['client_secret'], refresh_token=refresh, grant_type='refresh_token')
-    async with httpx.AsyncClient(timeout=10) as http: response = await http.post(TOKEN_URI, data=data)
+    async with httpx2.AsyncClient(timeout=10) as http: response = await http.post(TOKEN_URI, data=data)
     if response.status_code == 400 and response.json().get('error') == 'invalid_grant': return
     response.raise_for_status()
     return refresh
 
 
 async def authorize_google(
-    client_path:str|Path='oauth-client.json', # Web client JSON from create_client
+    client_path:str|Path='oauth-client.json', # Web or Desktop client JSON from create_client
     token_path:str|Path='oauth-token.json', # Destination for access and refresh token JSON
     preset:str='google-apps', # Scope preset
     scopes=None, # Additional OAuth scopes
     account:str=None, # Google account email hint and verification
     cdp:CDP=None, # Existing CDP connection; the default browser if omitted
-    remote:bool=False, # Use appapis copy/paste instead of a local callback?
+    remote:bool=False, # Use appapis copy/paste instead of a local callback (Web clients only)?
     open_browser:bool=True, # Open the appapis authorization URL in the default browser?
 ) -> dict:
     "Authorize Google APIs and save refreshable token JSON"
-    client = json.loads(Path(client_path).read_text())['web']
+    client,desktop = _client_config(json.loads(Path(client_path).read_text()))
     token_path = Path(token_path)
     previous = json.loads(token_path.read_text()) if token_path.exists() else {}
-    scopes,_ = oauth_config(preset, scopes)
+    scopes = oauth_config(preset, scopes).scopes
     account = account or previous.get('account')
     refresh = await _reusable_refresh(previous, client, scopes, account)
-    token = await _request_token(client, scopes, account, cdp, remote, open_browser, force_consent=not refresh)
+    token = await _request_token(client, scopes, account, cdp, remote, open_browser, force_consent=not refresh, desktop=desktop)
     if not token.get('refresh_token'):
         if not refresh: raise RuntimeError('Google did not return a refresh token after explicit consent')
         token['refresh_token'] = refresh
