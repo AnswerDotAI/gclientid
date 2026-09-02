@@ -1,5 +1,12 @@
 <!-- do not remove -->
 
+## 0.1.5
+
+### New Features
+
+- Add Desktop OAuth client, converging idempotent provisioning with stable per-owner project IDs, and token loading with auto re-authorization ([#14](https://github.com/AnswerDotAI/gclientid/issues/14))
+
+
 ## 0.1.4
 
 ### New Features
