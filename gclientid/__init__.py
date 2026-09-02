@@ -1,4 +1,5 @@
-__version__ = "0.1.5"
+__version__ = "0.1.6"
+
 
 from .config import config_dir, oauth_settings, output_dir, project_id
 from .creds import client_file, logout, oauth_creds, reauth_cmd, reauthorize, refresh_creds, token_file, token_has_scopes, token_name
