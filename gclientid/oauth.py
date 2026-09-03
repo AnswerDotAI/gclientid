@@ -138,13 +138,18 @@ async def _setup_auth(page:Page, project_id:str, name:str, internal:bool, suppor
     await page.wait_for_ax('heading', 'OAuth Overview', timeout=terms_timeout)
 
 
+def _domain_values(tree):
+    "Values in the Branding page's authorized-domain textboxes"
+    return [c.name for n in _form(tree).find_all('textbox', 'Authorized domain') for c in n.children]
+
+
 async def _set_branding(page:Page, project_id:str, timeout:int):
     await page.goto(f'https://console.cloud.google.com/auth/branding?project={project_id}', timeout=timeout)
     tree = await page.wait_for_ax('heading', 'Branding', timeout=timeout)
     await page.fill_text(tree.find_id('textbox', 'Application home page'), HOME_URL)
     await page.fill_text(tree.find_id('textbox', 'Application privacy policy link'), PRIVACY_URL)
     tree = await page.ax_tree()
-    if not tree.find(name=DOMAIN):
+    if DOMAIN not in _domain_values(tree):
         domains = tree.find('main').find('form').find_all('textbox', 'Authorized domain')
         if not domains:
             await page.click(tree.find_id('button', 'Add domain'))
