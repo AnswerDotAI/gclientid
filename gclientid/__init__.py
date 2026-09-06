@@ -1,4 +1,5 @@
-__version__ = "0.1.6"
+__version__ = "0.1.7"
+
 
 
 from .config import config_dir, oauth_settings, output_dir, project_id
