@@ -42,7 +42,7 @@ This finds or creates your default project through the signed-in Cloud Console, 
 
 The default project ID is `gclientids-` plus a hash of the signed-in account's email, so it is the same on every machine and every run. Running `gclientid` again converges: the project, APIs, app, and client are checked and only what is missing is created.
 
-The Web client is registered with `http://127.0.0.1:53682/` for the local callback, `https://oauth.appapis.org/redirect` for remote authorization, and `http://localhost:<port>/redirect` and `http://127.0.0.1:<port>/redirect` for ports 5001, 5002, and 8000, so a local [fasthtml](https://www.fastht.ml/) app can sign in with the same client. Add more with `--redirect`; re-running registers any the client lacks.
+The Web client is registered with `http://127.0.0.1:53682/` for the local callback, `https://oauth.appapis.org/redirect` for remote authorization, and `http://localhost:<port>/redirect` and `http://127.0.0.1:<port>/redirect` for ports 5001, 5002, 8000, and 8080. A local [fasthtml](https://www.fastht.ml/) app can sign in with the same client. Add more with `--redirect`; re-running registers any the client lacks.
 
 A Desktop client for software you distribute, which accepts any loopback port and has no redirect list, is one flag away and lives in the same project:
 
