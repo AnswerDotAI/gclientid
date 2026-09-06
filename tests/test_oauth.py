@@ -39,7 +39,7 @@ def test_presets():
     assert extra.scopes[-1].endswith('forms.body') and extra.apis[-1] == 'forms.googleapis.com'
     assert (GOOGLE_APPS + GOOGLE_APPS).scopes == GOOGLE_APPS.scopes
     with pytest.raises(ValueError, match='Unknown preset'): oauth_config('nope')
-    assert len(DEV_REDIRECT_URIS) == 6 and all(u.endswith('/redirect') for u in DEV_REDIRECT_URIS)
+    assert len(DEV_REDIRECT_URIS) == 8 and all(u.endswith('/redirect') for u in DEV_REDIRECT_URIS)
 
 
 def test_matching_refresh():
