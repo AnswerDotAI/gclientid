@@ -1,5 +1,12 @@
 <!-- do not remove -->
 
+## 0.1.6
+
+### New Features
+
+- Register port 8080 callbacks for web OAuth clients ([#16](https://github.com/AnswerDotAI/gclientid/pull/16)), thanks to [@jph00](https://github.com/jph00)
+
+
 ## 0.1.5
 
 ### New Features
