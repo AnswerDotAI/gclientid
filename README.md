@@ -2,10 +2,10 @@
 
 `gclientid` creates a personal Google OAuth application in your own Google Cloud account, with a Web client for scripts and local web apps and a Desktop client for software you distribute. It can also authorize Google accounts and save standard refreshable tokens for Gmail, Drive, Calendar, Contacts, Tasks, Google Cloud, and Workspace administration.
 
-There are two independent operations:
+There are two operations:
 
-1. **Provisioning** finds or creates one stable Cloud project per owner, enables its APIs, configures consent, and creates an OAuth client in a signed-in Chrome. Every run converges on that state, so it is safe to repeat. A first run can create the project through Cloud Console with no existing credentials; `--owner` uses Google APIs when a cloud-authorized gclientid account already exists. Google provides no supported API for a general-purpose OAuth client; its programmatic client API creates IAP-only clients.
-2. **Authorization** grants a client access to one Google account and writes a token. Normally it drives a signed-in Chrome and receives Google's response on a one-shot local callback; remote sessions can instead use a PKCE-protected appapis copy/paste callback.
+1. **Provisioning** finds or creates one stable Cloud project per owner and configures its OAuth client in a signed-in Chrome. It reuses or obtains a Cloud-access token for the owner, then batch-enables APIs through Service Usage rather than visiting each API's Console page. Every run converges on that state, so it is safe to repeat. No existing credentials are needed; `--owner` uses existing Cloud credentials for project creation too. Google provides no supported API for a general-purpose OAuth client; its programmatic client API creates IAP-only clients.
+2. **Authorization** grants a client access to a Google account's requested data and writes a token. Normally it drives a signed-in Chrome and receives Google's response on a one-shot local callback; remote sessions can instead use a PKCE-protected appapis copy/paste callback.
 
 `gclientid` can do both in one command, but provisioning is the default. Everything runs locally and `gcloud` is neither used nor required.
 
@@ -23,14 +23,21 @@ Provisioning needs access to a Google Cloud Console session. Choose either appro
 
 **Your normal Chrome:** enable **Allow remote debugging** in `chrome://inspect/#remote-debugging`, then run `gclientid` normally. Chrome asks you to approve the connection. This is convenient when your usual browser is already signed into the Cloud account that should own the project.
 
-**Dedicated CDP Chrome:** install the launcher once, start **CDP Chrome**, and sign into the desired Cloud account:
+**Dedicated CDP Chrome:** install the launcher once:
 
 ```bash
 fastcdp-setup
+```
+
+Open **CDP Chrome** from the launcher that command creates. On macOS it is in `~/Applications/CDP Chrome.app`. In that browser, open `https://console.cloud.google.com/` and sign into the account that should own the project. Complete any passkey or other verification prompt. CDP Chrome has a separate profile; being signed into normal Chrome does not sign you into CDP Chrome.
+
+Leave CDP Chrome running, then use:
+
+```bash
 gclientid --cdp-chrome
 ```
 
-CDP Chrome uses a separate profile and does not show a connection-approval prompt.
+CDP Chrome does not show a connection-approval prompt. `fastcdp-setup` creates its launcher; it does not open the browser or sign you in.
 
 ### 2. Create the project and OAuth client
 
@@ -38,9 +45,9 @@ CDP Chrome uses a separate profile and does not show a connection-approval promp
 gclientid
 ```
 
-This finds or creates your default project through the signed-in Cloud Console, enables the APIs of the `max` preset, configures branding, declared scopes, and the consent screen, publishes an External app as an unverified production application, and creates a Web OAuth client. No existing token is needed.
+This finds or creates your default project through the signed-in Cloud Console, configures branding, scopes, and consent, publishes an External app as an unverified production application, and creates a Web OAuth client. It then authorizes the project owner for Google Cloud access and batch-enables the APIs of the `max` preset. An existing usable Cloud token is reused without another authorization. No existing token is needed for a first run.
 
-The default project ID is `gclientids-` plus a hash of the signed-in account's email, so it is the same on every machine and every run. Running `gclientid` again converges: the project, APIs, app, and client are checked and only what is missing is created.
+The default project ID is `gclientids-` plus a hash of the signed-in account's email, so it is the same on every machine and every run. Reruns reuse the existing project and saved client. They query enabled services and enable only missing APIs. Branding and scopes are read from the Console and saved only when changes are needed.
 
 The Web client is registered with `http://127.0.0.1:53682/` for the local callback, `https://oauth.appapis.org/redirect` for remote authorization, and `http://localhost:<port>/redirect` and `http://127.0.0.1:<port>/redirect` for ports 5001, 5002, 8000, and 8080. A local [fasthtml](https://www.fastht.ml/) app can sign in with the same client. Add more with `--redirect`; re-running registers any the client lacks.
 
@@ -50,13 +57,13 @@ A Desktop client for software you distribute, which accepts any loopback port an
 gclientid --desktop
 ```
 
-Complete any Google terms screen that appears, or allow gclientid to accept it:
+Google's API Services terms checkbox is accepted automatically. To pause for manual acceptance instead:
 
 ```bash
-gclientid --accept-terms
+gclientid --no-accept-terms
 ```
 
-Provisioning writes `config.ini` and `oauth-client.json` (or `oauth-client-desktop.json`). It does **not** grant access to Gmail or create a token.
+Provisioning writes `config.ini`, `oauth-client.json` (or `oauth-client-desktop.json`), and the owner's Cloud token when a new authorization is needed. That setup grant requests only identity and Cloud access, **not Gmail or Drive data**. When Google shows a verification or passkey screen, gclientid prints a message, brings the tab forward, and waits up to ten minutes for you to complete it. Automation resumes after verification.
 
 When an existing gclientid token has `cloud-platform` access, `--owner` instead creates and configures the project through Resource Manager and Service Usage:
 
@@ -66,10 +73,10 @@ gclientid --owner me@example.com
 
 Chrome must also be signed into that account so gclientid can require the same support/contact email. API provisioning grants the owner explicit Service Usage Consumer access. `--internal` requires this path because the owner token resolves the Workspace organization.
 
-To prepare an owner token during an initial External setup, request the `developer` preset and authorize in the same run:
+The default External setup prepares an owner token automatically. To add Cloud access to an account with an existing client:
 
 ```bash
-gclientid --preset developer --authorize --account me@example.com
+gclientid-auth me@example.com --preset cloud
 ```
 
 ### 3. Authorize a Google account when needed
@@ -118,6 +125,7 @@ Provisioning declares every scope in the `max` preset on the project and enables
 
 - `google-apps`, the default, requests broad access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, and Slides.
 - `gmail` requests identity information and unrestricted Gmail access.
+- `cloud` requests only identity and Google Cloud access; provisioning uses it for the owner setup grant.
 - `workspace-addon` requests identity and Google Cloud access and enables the APIs needed to manage Workspace add-on deployments.
 - `developer` combines `google-apps` with `cloud-platform`. Cloud access remains limited by the authorized account's IAM roles.
 - `workspace-admin` combines `google-apps` with broad Admin SDK and Enterprise License Manager access. Admin operations remain limited by the account's Workspace privileges.
@@ -213,7 +221,9 @@ await provision(desktop=True, cdp_chrome=True)
 token_path = await authorize_account('me@example.com', desktop=True, cdp_chrome=True)
 ```
 
-Each Console step is its own function taking a signed-in page: `console_account`, `ensure_project_ui`, `enable_apis_ui`, `configure_app`, `create_client`, and `add_redirects`. `provision_project` is the Resource Manager equivalent of the project and API steps:
+Each Console step is its own function taking a signed-in page: `console_account`, `ensure_project_ui`, `configure_app`, `create_client`, and `add_redirects`. For finer control, call `setup_auth`, `set_branding`, `set_scopes`, and `publish_app` separately instead of `configure_app`. `set_branding` returns whether it changed anything. `set_scopes` adds missing scopes and returns the added list. `publish_app` is for External apps. See [AGENTS.md](AGENTS.md) for the semi-interactive workflow and credential-file handoff.
+
+`enable_apis` uses Service Usage with Cloud credentials. `provision_project` handles both the project and API steps through REST:
 
 ```python
 from gclientid import add_redirects, configure_app, connect_browser, create_client, provision_project

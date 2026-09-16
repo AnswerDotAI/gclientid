@@ -31,7 +31,7 @@ WORKSPACE_ADMIN = Preset(_auth_scopes('admin.directory.user admin.directory.grou
     'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly apps.licensing'),
     _apis('admin licensing'))
 MAX = GOOGLE_APPS + CLOUD + WORKSPACE_ADMIN
-PRESETS = {'gmail': GMAIL, 'workspace-addon': WORKSPACE_ADDON, 'google-apps': GOOGLE_APPS, 'developer': GOOGLE_APPS + CLOUD,
+PRESETS = {'cloud': IDENTITY + CLOUD, 'gmail': GMAIL, 'workspace-addon': WORKSPACE_ADDON, 'google-apps': GOOGLE_APPS, 'developer': GOOGLE_APPS + CLOUD,
     'workspace-admin': GOOGLE_APPS + WORKSPACE_ADMIN, 'max': MAX}
 
 
@@ -55,6 +55,7 @@ DEV_REDIRECT_URIS = tuple(f'http://{h}:{p}/redirect' for p in DEV_PORTS for h in
 REDIRECT_URIS = (LOCAL_REDIRECT_URI, REMOTE_REDIRECT_URI, *DEV_REDIRECT_URIS)
 DESKTOP_REDIRECT_URIS = ('http://localhost',)
 MANAGED_PROFILE_NOTICE = 'chrome://managed-user-profile-notice/'
+SIGNIN_CHALLENGE = r"location.hostname === 'accounts.google.com' && /\/challenge\/|\/signin\/confirmidentifier/.test(location.pathname)"
 
 
 async def connect_browser(
@@ -87,7 +88,7 @@ def _authorized_user(token, client):
 
 async def _wait_saved(page, timeout, label):
     "Wait for a Console Save action to settle, raising its visible error"
-    await page.wait_for(r'''(() => {
+    await _wait_google(page, r'''(() => {
         const save = [...document.querySelectorAll('main button')].find(x => x.textContent.trim() === 'Save');
         const err = [...document.querySelectorAll('[role="dialog"]')].some(x => /error/i.test(x.textContent));
         return err || !save || save.disabled || save.getAttribute('aria-disabled') === 'true';
@@ -95,18 +96,56 @@ async def _wait_saved(page, timeout, label):
     if (await page.ax_tree()).find('dialog', 'Error dialog'): raise RuntimeError(f'Google rejected the OAuth {label} settings')
 
 
-async def _setup_auth(page:Page, project_id:str, name:str, internal:bool, support_email:str, accept_terms:bool, timeout:int, terms_timeout:int):
+def _signin_challenge(node):
+    url = urlparse(node.props.get('url', ''))
+    return url.hostname == 'accounts.google.com' and ('/challenge/' in url.path or '/signin/confirmidentifier' in url.path)
+
+
+async def _wait_signin(page):
+    print('Google sign-in/passkey required. Complete verification in Chrome; waiting for you...')
+    await page.Page.bringToFront()
+    await page.wait_for(f'!({SIGNIN_CHALLENGE})', timeout=600)
+
+
+async def _wait_google(page, expr, timeout=10):
+    while True:
+        result = await page.wait_for(f'({SIGNIN_CHALLENGE}) || ({expr})', timeout=timeout)
+        if not await page.eval(SIGNIN_CHALLENGE): return result
+        await _wait_signin(page)
+
+
+async def _wait_ax(page, role=None, name=None, pred=None, timeout=10):
+    def ready(n):
+        return _signin_challenge(n) or ((role is None or n.role == role) and (name is None or name in n.name) and (pred is None or pred(n)))
+    while True:
+        await asyncio.sleep(0.1)
+        tree = await page.wait_for_ax(pred=ready, timeout=timeout)
+        if not _signin_challenge(tree): return tree
+        await _wait_signin(page)
+
+
+async def setup_auth(
+    page:Page, # Signed-in Google Cloud Console page
+    project_id:str, # Existing Google Cloud project ID
+    name:str='gclientids', # OAuth application name
+    internal:bool=False, # Restrict authorization to the project's organization?
+    support_email:str=None, # Require this support/contact email in the signed-in Console session
+    accept_terms:bool=True, # Accept Google's API Services terms without pausing?
+    timeout:int=10, # Seconds to wait for each Console operation
+    terms_timeout:int=600, # Seconds to wait for manual terms acceptance
+):
+    "Initialize the OAuth app's name, audience, and contact details unless it already exists"
     await page.goto(f'https://console.cloud.google.com/auth/overview?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('heading', 'OAuth Overview', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'OAuth Overview', timeout=timeout)
     start = tree.find('link', 'Get started')
     if not start: return
 
     await page.click(start.find_id())
-    tree = await page.wait_for_ax('heading', 'App Information', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'App Information', timeout=timeout)
     await page.fill_text(tree.find_id('textbox', 'App name'), name)
-    tree = await page.wait_for_ax('combobox', 'User support email', pred=lambda n: not n.props.get('disabled'), timeout=timeout)
+    tree = await _wait_ax(page, 'combobox', 'User support email', pred=lambda n: not n.props.get('disabled'), timeout=timeout)
     await page.click(tree.find_id('combobox', 'User support email'))
-    tree = await page.wait_for_ax('option', timeout=timeout)
+    tree = await _wait_ax(page, 'option', timeout=timeout)
     emails = [n.name for n in tree.find_all('option') if '@' in n.name]
     email = next((e for e in emails if not support_email or e.casefold() == support_email.casefold()), None)
     if not email: raise RuntimeError('Google did not offer a support email')
@@ -114,13 +153,13 @@ async def _setup_auth(page:Page, project_id:str, name:str, internal:bool, suppor
 
     tree = await page.ax_tree()
     await page.click(tree.find('main').find('form').find_id('button', 'Next'))
-    tree = await page.wait_for_ax('heading', 'Audience, step 2 of 4, in progress', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'Audience, step 2 of 4, in progress', timeout=timeout)
     audience = 'Internal' if internal else 'External'
     await page.click(tree.find('main').find('form').find_id('radio', audience))
     tree = await page.ax_tree()
     await page.click(tree.find('main').find('form').find_id('button', 'Next'))
 
-    tree = await page.wait_for_ax('heading', 'Contact Information, step 3 of 4, in progress', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'Contact Information, step 3 of 4, in progress', timeout=timeout)
     contact = tree.find('main').find('form').find_id('textbox', 'Text field for emails')
     await page.fill_text(contact, email)
     await page.input.dispatchKeyEvent(type='rawKeyDown', key='Enter', code='Enter', windowsVirtualKeyCode=13)
@@ -128,14 +167,14 @@ async def _setup_auth(page:Page, project_id:str, name:str, internal:bool, suppor
     tree = await page.ax_tree()
     await page.click(tree.find('main').find('form').find_id('button', 'Next'))
 
-    tree = await page.wait_for_ax('heading', 'Finish, step 4 of 4, in progress', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'Finish, step 4 of 4, in progress', timeout=timeout)
     if accept_terms:
         await page.click(tree.find('main').find('form').find_id('checkbox', 'I agree'))
         tree = await page.ax_tree()
         await page.click(tree.find('main').find('form').find_id('button', 'Continue'))
-        tree = await page.wait_for_ax('button', 'Create', timeout=timeout)
+        tree = await _wait_ax(page, 'button', 'Create', timeout=timeout)
         await page.click(tree.find('main').find('form').find_id('button', 'Create'))
-    await page.wait_for_ax('heading', 'OAuth Overview', timeout=terms_timeout)
+    await _wait_ax(page, 'heading', 'OAuth Overview', timeout=terms_timeout)
 
 
 def _domain_values(tree):
@@ -143,52 +182,70 @@ def _domain_values(tree):
     return [c.name for n in _form(tree).find_all('textbox', 'Authorized domain') for c in n.children]
 
 
-async def _set_branding(page:Page, project_id:str, timeout:int):
+async def set_branding(page:Page, project_id:str, timeout:int=10):
+    "Set gclientid's homepage, privacy URL, and authorized domain; return whether anything changed"
     await page.goto(f'https://console.cloud.google.com/auth/branding?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('heading', 'Branding', timeout=timeout)
-    await page.fill_text(tree.find_id('textbox', 'Application home page'), HOME_URL)
-    await page.fill_text(tree.find_id('textbox', 'Application privacy policy link'), PRIVACY_URL)
-    tree = await page.ax_tree()
+    tree = await _wait_ax(page, 'textbox', 'Application home page', timeout=timeout)
+    changed = False
+    for label,value in (('Application home page', HOME_URL), ('Application privacy policy link', PRIVACY_URL)):
+        node = tree.find('textbox', label)
+        if ''.join(c.name for c in node.children) == value: continue
+        await page.fill_text(node.find_id(), value)
+        changed = True
     if DOMAIN not in _domain_values(tree):
+        await page.click(tree.find_id('button', 'Add domain'))
+        tree = await _wait_ax(page, 'textbox', 'Authorized domain', pred=lambda n: not n.children, timeout=timeout)
         domains = tree.find('main').find('form').find_all('textbox', 'Authorized domain')
-        if not domains:
-            await page.click(tree.find_id('button', 'Add domain'))
-            tree = await page.wait_for_ax('textbox', 'Authorized domain', timeout=timeout)
-            domains = tree.find('main').find('form').find_all('textbox', 'Authorized domain')
         await page.fill_text(domains[-1].find_id(), DOMAIN)
-        tree = await page.ax_tree()
+        changed = True
+    if not changed: return False
+    tree = await page.ax_tree()
     await page.click(tree.find('main').find('form').find_id('button', 'Save'))
     await _wait_saved(page, timeout, 'branding')
+    return True
 
 
-async def _set_scopes(page:Page, project_id:str, scopes, timeout:int):
+async def set_scopes(page:Page, project_id:str, scopes=MAX.scopes, timeout:int=10):
+    "Add missing declared scopes without removing existing scopes; return the added scopes"
     scopes = [s for s in scopes if s.startswith('https://')]
-    if not scopes: return
+    if not scopes: return []
     await page.goto(f'https://console.cloud.google.com/auth/scopes?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('heading', 'Data Access', timeout=timeout)
+    tree = await _wait_ax(page, 'button', 'Add or remove scopes', timeout=timeout)
+    current = set()
+    while True:
+        names = {n.name for n in tree.find('main').find_all('gridcell')}
+        current.update(n.replace(' ', '').replace('.../auth/', AUTH_SCOPE) for n in names)
+        next_page = next((n for n in tree.find('main').find_all('button', 'Next ') if not n.props.get('disabled')), None)
+        if not next_page: break
+        await page.click(next_page.find_id())
+        tree = await _wait_ax(page, 'gridcell', pred=lambda n: n.name not in names, timeout=timeout)
+    scopes = [s for s in scopes if s not in current]
+    if not scopes: return []
     await page.click(tree.find_id('button', 'Add or remove scopes'))
-    tree = await page.wait_for_ax('dialog', 'Update selected scopes', timeout=timeout)
+    tree = await _wait_ax(page, 'dialog', 'Update selected scopes', timeout=timeout)
     dialog = tree.find('dialog', 'Update selected scopes')
     await page.fill_text(dialog.find_id('textbox', 'Manually paste scopes'), '\n'.join(scopes))
     tree = await page.ax_tree()
     await page.click(tree.find('dialog', 'Update selected scopes').find_id('button', 'Add to table'))
-    await page.wait_for('document.querySelector(\'[aria-label="Manually paste scopes"]\')?.value === ""', timeout=timeout)
+    await _wait_google(page, 'document.querySelector(\'[aria-label="Manually paste scopes"]\')?.value === ""', timeout=timeout)
     tree = await page.ax_tree()
     await page.click(tree.find('dialog', 'Update selected scopes').find_id('button', 'Update'))
     await page.wait_for_text('Update selected scopes', present=False, timeout=timeout)
     tree = await page.ax_tree()
     await page.click(tree.find('main').find('form').find_id('button', 'Save'))
     await _wait_saved(page, timeout, 'scope')
+    return scopes
 
 
-async def _publish(page:Page, project_id:str, timeout:int):
+async def publish_app(page:Page, project_id:str, timeout:int=10):
+    "Publish an External OAuth app unless it is already in production; do not use for Internal apps"
     await page.goto(f'https://console.cloud.google.com/auth/audience?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('heading', 'Audience', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'Audience', timeout=timeout)
     if tree.find(name='In production'): return
     await page.click(tree.find_id('button', 'Publish app'))
-    tree = await page.wait_for_ax('alertdialog', 'Push to production?', timeout=timeout)
+    tree = await _wait_ax(page, 'alertdialog', 'Push to production?', timeout=timeout)
     await page.click(tree.find('alertdialog', 'Push to production?').find_id('button', 'Confirm'))
-    await page.wait_for_ax(name='In production', timeout=timeout)
+    await _wait_ax(page, name='In production', timeout=timeout)
 
 
 def _form(tree): return tree.find('main').find('form')
@@ -197,7 +254,7 @@ def _form(tree): return tree.find('main').find('form')
 async def console_account(page:Page, timeout:int=10) -> str:
     "Email of the Google account signed into the Cloud Console"
     await page.goto('https://console.cloud.google.com/welcome', timeout=timeout)
-    tree = await page.wait_for_ax('button', 'Account:', timeout=timeout)
+    tree = await _wait_ax(page, 'button', 'Account:', timeout=timeout)
     return tree.find('button', 'Account:').name.rsplit('(', 1)[1].rstrip(')')
 
 
@@ -208,15 +265,15 @@ async def configure_app(
     scopes=MAX.scopes, # Scopes to declare on the Data Access page
     internal:bool=False, # Restrict OAuth authorization to the Cloud project's organization?
     support_email:str=None, # Require this support/contact email in the signed-in Console session
-    accept_terms:bool=False, # Accept Google's API Services terms without pausing?
+    accept_terms:bool=True, # Accept Google's API Services terms without pausing?
     timeout:int=10, # Seconds to wait for each Console operation
     terms_timeout:int=600, # Seconds to wait while the developer handles the terms screen
 ):
     "Idempotently configure the project's OAuth app: audience, branding, declared scopes, and publication"
-    await _setup_auth(page, project_id, name, internal, support_email, accept_terms, timeout, terms_timeout)
-    await _set_branding(page, project_id, timeout)
-    await _set_scopes(page, project_id, scopes, timeout)
-    if not internal: await _publish(page, project_id, timeout)
+    await setup_auth(page, project_id, name, internal, support_email, accept_terms, timeout, terms_timeout)
+    await set_branding(page, project_id, timeout)
+    await set_scopes(page, project_id, scopes, timeout)
+    if not internal: await publish_app(page, project_id, timeout)
 
 
 def _redirect_group(tree): return tree.find('group', 'Authorized redirect URIs')
@@ -229,7 +286,7 @@ async def _add_redirect_fields(page, tree, uris, timeout):
     for uri in uris:
         n += 1
         await page.click(_redirect_group(tree).find_id('button', 'Add URI'))
-        tree = await page.wait_for_ax('textbox', f'URIs {n} ', timeout=timeout)
+        tree = await _wait_ax(page, 'textbox', f'URIs {n} ', timeout=timeout)
         await page.fill_text(_redirect_group(tree).find_id('textbox', f'URIs {n} '), uri)
         tree = await page.ax_tree()
     return tree
@@ -264,16 +321,16 @@ async def create_client(
     path = Path(path)
     if path.exists(): raise FileExistsError(path)
     await page.goto(f'https://console.cloud.google.com/auth/clients/create?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('heading', 'Create OAuth client ID', timeout=timeout)
+    tree = await _wait_ax(page, 'heading', 'Create OAuth client ID', timeout=timeout)
     await page.click(tree.find_id('combobox', 'Application type'))
     app_type = 'Desktop app' if desktop else 'Web application'
-    tree = await page.wait_for_ax('option', app_type, timeout=timeout)
+    tree = await _wait_ax(page, 'option', app_type, timeout=timeout)
     await page.click(tree.find_id('option', app_type))
-    tree = await page.wait_for_ax('textbox', 'Name', timeout=timeout)
+    tree = await _wait_ax(page, 'textbox', 'Name', timeout=timeout)
     await page.fill_text(_form(tree).find('form').find_id('textbox', 'Name'), name)
     if not desktop: tree = await _add_redirect_fields(page, tree, redirects, timeout)
     await page.click(_form(tree).find('form').find_id('button', 'Create'))
-    tree = await page.wait_for_ax('term', 'Client secret', timeout=timeout)
+    tree = await _wait_ax(page, 'term', 'Client secret', timeout=timeout)
     dialog,client_id,client_secret = _created_client(tree)
     client = dict(client_id=client_id, project_id=project_id, auth_uri=AUTH_URI, token_uri=TOKEN_URI, auth_provider_x509_cert_url=CERT_URI,
         client_secret=client_secret, redirect_uris=list(DESKTOP_REDIRECT_URIS if desktop else redirects))
@@ -295,14 +352,15 @@ async def add_redirects(
     client,desktop = _client_config(data)
     if desktop: raise ValueError('Desktop clients accept any loopback redirect; only Web clients register URIs')
     await page.goto(f'https://console.cloud.google.com/auth/clients/{client["client_id"]}?project={client["project_id"]}', timeout=timeout)
-    tree = await page.wait_for_ax('group', 'Authorized redirect URIs', timeout=timeout)
+    tree = await _wait_ax(page, 'group', 'Authorized redirect URIs', timeout=timeout)
     current = _redirect_values(tree)
     missing = [u for u in redirects if u not in current]
     if missing:
         tree = await _add_redirect_fields(page, tree, missing, timeout)
         await page.click_and_wait(_form(tree).find_id('button', 'Save'), timeout=timeout)
-    client['redirect_uris'] = current + missing
-    _write_json(path, data)
+    if client.get('redirect_uris') != current + missing:
+        client['redirect_uris'] = current + missing
+        _write_json(path, data)
     return client['redirect_uris']
 
 
@@ -366,7 +424,7 @@ async def _oauth_stage(page, labels, timeout):
     "Wait for one OAuth screen or the loopback redirect."
     errors = ['Access blocked:', 'Something went wrong']
     expr = f'''location.hostname === '127.0.0.1' || {json.dumps([*labels, *errors])}.some(x => document.body?.innerText?.includes(x))'''
-    await page.wait_for(expr, timeout=timeout)
+    await _wait_google(page, expr, timeout=timeout)
     if await page.eval("location.hostname === '127.0.0.1'"): return
     tree = await page.ax_tree()
     heading = tree.find('heading', errors[0]) or tree.find('heading', errors[1])
@@ -388,7 +446,7 @@ async def _drive_oauth(page, account, timeout):
         tree = await _oauth_stage(page, labels[1:], timeout)
     if tree and (advanced := tree.find('link', 'Advanced') or tree.find('button', 'Advanced')):
         await page.dom_click(advanced.find_id())
-        tree = await page.wait_for_ax('link', 'unsafe', timeout=timeout)
+        tree = await _wait_ax(page, 'link', 'unsafe', timeout=timeout)
         await page.dom_click(tree.find('link', 'unsafe').find_id())
         tree = await _oauth_stage(page, labels[2:], timeout)
     if tree and (select_all := tree.find('checkbox', 'Select all')):
@@ -438,7 +496,7 @@ async def _open_cdp(cdp, auth_url, account, timeout):
     async def drive():
         await page.page.navigate(url=auth_url)
         await _drive_oauth(page, account, timeout)
-        await page.wait_for("location.hostname === '127.0.0.1'", timeout=timeout)
+        await _wait_google(page, "location.hostname === '127.0.0.1'", timeout=timeout)
 
     flow = asyncio.create_task(drive())
     try:

@@ -4,7 +4,7 @@ import httpx2
 from fastcdp import Page
 
 from .creds import oauth_creds, refresh_creds
-from .oauth import CLOUD
+from .oauth import CLOUD, _wait_ax
 
 PROJECT_ROLES = ('roles/serviceusage.serviceUsageConsumer',)
 CREATE_URL = 'https://console.cloud.google.com/projectcreate'
@@ -15,23 +15,24 @@ SERVICE_USAGE = 'https://serviceusage.googleapis.com/v1'
 async def project_exists_ui(page:Page, project_id:str, timeout:int=10):
     "Whether the signed-in Console account can open `project_id`"
     await page.goto(f'https://console.cloud.google.com/welcome?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('button', 'Hit enter to s', timeout=timeout)
-    return not tree.find('button', 'No project selected')
+    label = f'Copy Project ID to clipboard: {project_id}'
+    tree = await _wait_ax(page, 'button', pred=lambda n: n.name in (label, 'Create or select a project'), timeout=timeout)
+    return bool(tree.find('button', label))
 
 
 async def create_project_ui(page:Page, project_id:str, name:str=None, timeout:int=30):
     "Create a Google Cloud project through its Console"
     await page.goto(CREATE_URL, timeout=timeout)
-    tree = await page.wait_for_ax('textbox', 'Project name', timeout=timeout)
+    tree = await _wait_ax(page, 'textbox', 'Project name', timeout=timeout)
     form = tree.find('main').find('form')
     await page.fill_text(form.find_id('textbox', 'Project name'), name or project_id)
-    tree = await page.wait_for_ax('button', 'Edit the project id.', timeout=timeout)
+    tree = await _wait_ax(page, 'button', 'Edit the project id.', timeout=timeout)
     await page.click(tree.find('main').find('form').find_id('button', 'Edit the project id.'))
-    tree = await page.wait_for_ax('textbox', 'Project ID', timeout=timeout)
+    tree = await _wait_ax(page, 'textbox', 'Project ID', timeout=timeout)
     await page.fill_text(tree.find('main').find('form').find_id('textbox', 'Project ID'), project_id)
-    tree = await page.wait_for_ax('button', 'Create', timeout=timeout)
+    tree = await _wait_ax(page, 'button', 'Create', timeout=timeout)
     await page.click(tree.find('main').find('form').find_id('button', 'Create'))
-    await page.wait_for_ax('button', f'Navigate to {project_id} project', timeout=timeout)
+    await _wait_ax(page, 'button', f'Navigate to {project_id} project', timeout=timeout)
     return project_id
 
 
@@ -39,27 +40,6 @@ async def ensure_project_ui(page:Page, project_id:str, name:str=None, timeout:in
     "Create `project_id` through the Console unless it already exists"
     if not await project_exists_ui(page, project_id, timeout): await create_project_ui(page, project_id, name, timeout)
     return project_id
-
-
-async def enabled_apis_ui(page:Page, project_id:str, timeout:int=30):
-    "Service names enabled on `project_id`, read from the Console's APIs dashboard"
-    await page.goto(f'https://console.cloud.google.com/apis/dashboard?project={project_id}', timeout=timeout)
-    tree = await page.wait_for_ax('grid', 'Enabled APIs', timeout=timeout)
-    urls = [n.props.get('url', '') for n in tree.find('main').find_all('link')]
-    return {u.split('/apis/api/')[1].split('/')[0] for u in urls if '/apis/api/' in u}
-
-
-async def enable_apis_ui(page:Page, project_id:str, apis, timeout:int=30):
-    "Enable Google APIs through their Console pages, skipping those the dashboard already lists"
-    enabled = await enabled_apis_ui(page, project_id, timeout)
-    for api in apis:
-        if api in enabled: continue
-        await page.goto(f'https://console.cloud.google.com/apis/library/{api}?project={project_id}', timeout=timeout)
-        await page.wait_for_text(f'Service name: {api}', timeout=timeout)
-        tree = await page.ax_tree()
-        if enable := tree.find('button', 'enable this API'):
-            await page.click(enable.find_id())
-            await page.wait_for_ax('button', 'Disable API', timeout=timeout)
 
 
 async def cloud_creds(account):
@@ -111,12 +91,24 @@ async def find_project(creds, project_id):
     return matches[0] if matches else None
 
 
+async def enabled_apis(creds, project):
+    "Service names currently enabled on a project"
+    enabled,params = set(),dict(filter='state:ENABLED', pageSize=200)
+    while True:
+        result = await _call(creds, 'GET', f'{SERVICE_USAGE}/{project}/services', params=params)
+        enabled.update(s['config']['name'] for s in result.get('services', []))
+        if not (token := result.get('nextPageToken')): return enabled
+        params['pageToken'] = token
+
+
 async def enable_apis(creds, project, apis):
-    "Enable Google APIs on a project through Service Usage (at most 20 per call, Google's batch limit)"
-    apis = list(dict.fromkeys(apis))
+    "Enable only missing Google APIs through Service Usage, returning the newly enabled names"
+    enabled = await enabled_apis(creds, project)
+    apis = [a for a in dict.fromkeys(apis) if a not in enabled]
     for i in range(0, len(apis), 20):
         operation = await _call(creds, 'POST', f'{SERVICE_USAGE}/{project}/services:batchEnable', json=dict(serviceIds=apis[i:i+20]))
         await _wait_operation(creds, SERVICE_USAGE, operation)
+    return apis
 
 
 def _add_roles(policy, member, roles):
@@ -134,6 +126,7 @@ def _add_roles(policy, member, roles):
 async def grant_project_roles(creds, project, member, roles=PROJECT_ROLES):
     "Idempotently grant project IAM roles to a member"
     policy = await _call(creds, 'POST', f'{RESOURCE_MANAGER}/{project}:getIamPolicy', json={})
+    if all(any(b.get('role') == role and member in b.get('members', []) for b in policy.get('bindings', [])) for role in roles): return policy
     _add_roles(policy, member, roles)
     return await _call(creds, 'POST', f'{RESOURCE_MANAGER}/{project}:setIamPolicy', json=dict(policy=policy))
 

@@ -6,9 +6,10 @@ from fastcore.basics import listify
 from fastcore.script import call_parse
 
 from .config import oauth_settings, output_dir, project_id
-from .creds import client_file, token_file
-from .oauth import MAX, REDIRECT_URIS, Preset, add_redirects, authorize_google, configure_app, connect_browser, console_account, create_client
-from .projects import enable_apis_ui, ensure_project_ui, provision_project
+from .creds import client_file, oauth_creds, token_file
+from .oauth import (CLOUD, MAX, REDIRECT_URIS, Preset, add_redirects, authorize_google, configure_app,
+    connect_browser, console_account, create_client)
+from .projects import enable_apis, ensure_project_ui, provision_project
 
 
 def _check_output_writable(output):
@@ -37,11 +38,22 @@ async def _connect(cdp_chrome):
     return await connect_browser(default_browser=not cdp_chrome)
 
 
+async def _owner_creds(output, path, account, cdp, internal=False, desktop=False, remote=False, open_browser=True):
+    "Reuse the owner's Cloud token, or authorize it through the newly configured client"
+    target = token_file(account, internal, desktop, output)
+    try: return await oauth_creds(target, scopes=CLOUD.scopes, reauth=False)
+    except ValueError: pass
+    print(f'Authorizing {account} for Google Cloud setup...')
+    await _authorize_account(output, path, 'cloud', [], account, cdp=cdp, remote=remote, open_browser=open_browser,
+        internal=internal, desktop=desktop)
+    return await oauth_creds(target, scopes=CLOUD.scopes, reauth=False)
+
+
 async def provision(
     project:str=None, # Google Cloud project ID; the saved one, else the owner's stable `gclientids-*` ID
     name:str='gclientids', # OAuth application and client name
     output:Path=None, # Credential directory; $XDG_CONFIG_HOME/gclientid if omitted
-    owner:str=None, # Existing gclientid cloud account for API provisioning; otherwise use Cloud Console
+    owner:str=None, # Existing Cloud account for project creation; otherwise bootstrap through Cloud Console
     account:str=None, # Google account email to authorize when `authorize`
     preset:str=None, # Default scope preset for later authorization; the saved one, else google-apps
     scopes=None, # Additional OAuth scopes to declare, beyond `max`
@@ -49,7 +61,7 @@ async def provision(
     redirects=None, # Additional Web client redirect URIs, beyond the defaults
     internal:bool=False, # Use the Internal-audience project and its separate *-internal credential files?
     desktop:bool=False, # Ensure the Desktop client instead of the Web client?
-    accept_terms:bool=False, # Accept Google's API Services terms automatically?
+    accept_terms:bool=True, # Accept Google's API Services terms automatically?
     cdp_chrome:bool=False, # Use dedicated CDP Chrome instead of normal Chrome?
     authorize:bool=False, # Also authorize `account` after provisioning?
     remote:bool=False, # Authorize through appapis copy/paste instead of the local callback?
@@ -80,8 +92,6 @@ async def provision(
         else:
             print(f'Ensuring Google Cloud project {project} through Cloud Console...')
             await ensure_project_ui(page, project, name=name)
-            print(f'Enabling {len(declared.apis)} Google APIs through Cloud Console...')
-            await enable_apis_ui(page, project, declared.apis)
         print('Configuring the OAuth app...')
         await configure_app(page, project, name, declared.scopes, internal, email, accept_terms)
         if not path.exists():
@@ -90,6 +100,10 @@ async def provision(
         elif not desktop:
             print('Updating the Web OAuth client redirect URIs...')
             await add_redirects(page, path, redirects)
+        if not owner:
+            creds = await _owner_creds(output, path, email, cdp, internal, desktop, remote, open_browser)
+            print(f'Checking {len(declared.apis)} Google APIs through Service Usage...')
+            await enable_apis(creds, f'projects/{project}', declared.apis)
         config_path = _save_settings(cfg, project=project, name=name, preset=preset, scopes=' '.join(scopes), apis=' '.join(apis),
             audience='internal' if internal else 'external', browser='cdp-chrome' if cdp_chrome else 'chrome', reauth='true')
         if authorize and not remote:
@@ -149,15 +163,15 @@ async def main(
     Project:str=None, # Google Cloud project ID; the saved one, else the owner's stable `gclientids-*` ID
     Name:str='gclientids', # OAuth application and client name
     Output:Path=None, # Credential directory; $XDG_CONFIG_HOME/gclientid if omitted
-    owner:str=None, # Existing gclientid cloud account for API provisioning; otherwise use Cloud Console
+    owner:str=None, # Existing Cloud account for project creation; otherwise bootstrap through Cloud Console
     Account:str=None, # Google account email to authorize with --authorize
-    preset:str=None, # Default scope preset for later authorization: google-apps, workspace-addon, developer, workspace-admin, max, or gmail
+    preset:str=None, # Default scope preset: google-apps, cloud, workspace-addon, developer, workspace-admin, max, or gmail
     scope:Annotated[str, dict(action='append')]=None, # Additional OAuth scope to declare; may be repeated
     api:Annotated[str, dict(action='append')]=None, # Additional Google API service name to enable; may be repeated
     redirect:Annotated[str, dict(action='append')]=None, # Additional Web client redirect URI; may be repeated
     internal:bool=False, # Use the Internal-audience project and separate *-internal credential files?
     desktop:bool=False, # Ensure the Desktop client instead of the Web client?
-    accept_terms:bool=False, # Accept Google's API Services terms automatically?
+    accept_terms:bool=True, # Accept Google's API Services terms automatically?
     cdp_chrome:bool=False, # Use dedicated CDP Chrome instead of normal Chrome?
     authorize:bool=False, # Also authorize a Google account after provisioning?
     remote:bool=False, # Authorize through appapis copy/paste instead of the local callback?
