@@ -114,9 +114,9 @@ async def _wait_google(page, expr, timeout=10):
         await _wait_signin(page)
 
 
-async def _wait_ax(page, role=None, name=None, pred=None, timeout=10):
-    def ready(n):
-        return _signin_challenge(n) or ((role is None or n.role == role) and (name is None or name in n.name) and (pred is None or pred(n)))
+async def _wait_ax(page, role=None, name=None, pred=None, exact=False, timeout=10):
+    def named(n): return name is None or (n.name.strip() == name.strip() if exact else name in n.name)
+    def ready(n): return _signin_challenge(n) or ((role is None or n.role == role) and named(n) and (pred is None or pred(n)))
     while True:
         await asyncio.sleep(0.1)
         tree = await page.wait_for_ax(pred=ready, timeout=timeout)
@@ -286,8 +286,9 @@ async def _add_redirect_fields(page, tree, uris, timeout):
     for uri in uris:
         n += 1
         await page.click(_redirect_group(tree).find_id('button', 'Add URI'))
-        tree = await _wait_ax(page, 'textbox', f'URIs {n} ', timeout=timeout)
-        await page.fill_text(_redirect_group(tree).find_id('textbox', f'URIs {n} '), uri)
+        # Exact names: the Console has used both "URIs 1" and "URIs 1 ", and a substring would also match "URIs 10"
+        tree = await _wait_ax(page, 'textbox', f'URIs {n}', exact=True, timeout=timeout)
+        await page.fill_text(_redirect_group(tree).find_id('textbox', f'URIs {n}', exact=True), uri)
         tree = await page.ax_tree()
     return tree
 
