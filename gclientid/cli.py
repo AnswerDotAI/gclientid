@@ -165,7 +165,7 @@ async def main(
     Output:Path=None, # Credential directory; $XDG_CONFIG_HOME/gclientid if omitted
     owner:str=None, # Existing Cloud account for project creation; otherwise bootstrap through Cloud Console
     Account:str=None, # Google account email to authorize with --authorize
-    preset:str=None, # Default scope preset: google-apps, cloud, workspace-addon, developer, workspace-admin, max, or gmail
+    preset:str=None, # Default scope preset: google-apps, cloud, colab, workspace-addon, developer, workspace-admin, max, or gmail
     scope:Annotated[str, dict(action='append')]=None, # Additional OAuth scope to declare; may be repeated
     api:Annotated[str, dict(action='append')]=None, # Additional Google API service name to enable; may be repeated
     redirect:Annotated[str, dict(action='append')]=None, # Additional Web client redirect URI; may be repeated

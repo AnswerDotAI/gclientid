@@ -30,9 +30,10 @@ WORKSPACE_ADDON = IDENTITY + CLOUD + Preset(apis=_apis('gsuiteaddons'))
 WORKSPACE_ADMIN = Preset(_auth_scopes('admin.directory.user admin.directory.group admin.directory.orgunit admin.directory.domain '
     'admin.directory.resource.calendar admin.directory.rolemanagement admin.reports.audit.readonly admin.reports.usage.readonly apps.licensing'),
     _apis('admin licensing'))
-MAX = GOOGLE_APPS + CLOUD + WORKSPACE_ADMIN
-PRESETS = {'cloud': IDENTITY + CLOUD, 'gmail': GMAIL, 'workspace-addon': WORKSPACE_ADDON, 'google-apps': GOOGLE_APPS, 'developer': GOOGLE_APPS + CLOUD,
-    'workspace-admin': GOOGLE_APPS + WORKSPACE_ADMIN, 'max': MAX}
+COLAB = IDENTITY + Preset(_auth_scopes('colaboratory'), _apis('colaboratory'))
+MAX = GOOGLE_APPS + CLOUD + WORKSPACE_ADMIN + COLAB
+PRESETS = {'cloud': IDENTITY + CLOUD, 'colab': COLAB, 'gmail': GMAIL, 'workspace-addon': WORKSPACE_ADDON, 'google-apps': GOOGLE_APPS,
+    'developer': GOOGLE_APPS + CLOUD, 'workspace-admin': GOOGLE_APPS + WORKSPACE_ADMIN, 'max': MAX}
 
 
 def oauth_config(preset:str='google-apps', scopes=None, apis=None) -> Preset:
@@ -435,6 +436,14 @@ async def _oauth_stage(page, labels, timeout):
     return tree
 
 
+async def _advance(page, node_id, labels, timeout):
+    "Click `node_id`, wait for the URL to change, then wait for the next OAuth stage."
+    prev = await page.eval('location.href')
+    await page.dom_click(node_id)
+    await _wait_google(page, f'location.href !== {json.dumps(prev)}', timeout=timeout)
+    return await _oauth_stage(page, labels, timeout)
+
+
 async def _drive_oauth(page, account, timeout):
     "Advance each known Google OAuth screen at most once."
     labels = ['Choose an account', 'Advanced', 'Select all', 'Continue', 'Allow']
@@ -443,19 +452,17 @@ async def _drive_oauth(page, account, timeout):
         accounts = [n for n in tree.find('main').find_all('link') if 'Use another account' not in n.name]
         matches = accounts if account is None else [n for n in accounts if account.casefold() in n.name.casefold()]
         if len(matches) != 1: raise ValueError(f'Choose one Google account with account=: {", ".join(n.name for n in accounts)}')
-        await page.dom_click(matches[0].find_id())
-        tree = await _oauth_stage(page, labels[1:], timeout)
+        tree = await _advance(page, matches[0].find_id(), labels[1:], timeout)
     if tree and (advanced := tree.find('link', 'Advanced') or tree.find('button', 'Advanced')):
         await page.dom_click(advanced.find_id())
         tree = await _wait_ax(page, 'link', 'unsafe', timeout=timeout)
-        await page.dom_click(tree.find('link', 'unsafe').find_id())
-        tree = await _oauth_stage(page, labels[2:], timeout)
+        tree = await _advance(page, tree.find('link', 'unsafe').find_id(), labels[2:], timeout)
+    if tree and not tree.find('checkbox', 'Select all') and (continue_ := tree.find('button', 'Continue')):
+        tree = await _advance(page, continue_.find_id(), labels[2:], timeout)
     if tree and (select_all := tree.find('checkbox', 'Select all')):
         await page.dom_click(select_all.find_id())
         tree = await page.ax_tree()
-    if tree and (continue_ := tree.find('button', 'Continue')):
-        await page.dom_click(continue_.find_id())
-        tree = await _oauth_stage(page, ['Allow'], timeout)
+    if tree and (continue_ := tree.find('button', 'Continue')): tree = await _advance(page, continue_.find_id(), ['Allow'], timeout)
     if tree and (allow := tree.find('button', 'Allow')): await page.dom_click(allow.find_id())
 
 
