@@ -1,5 +1,13 @@
 <!-- do not remove -->
 
+## 0.1.7
+
+### New Features
+
+- Add colab preset to OAuth presets and max, wait for URL changes on OAuth transitions, and handle intermediate Continue screen ([#20](https://github.com/AnswerDotAI/gclientid/issues/20))
+- Batch-enable APIs via Service Usage with owner Cloud token, add sign-in challenge waits, and make Console steps convergent and public ([#17](https://github.com/AnswerDotAI/gclientid/issues/17))
+
+
 ## 0.1.6
 
 ### New Features
