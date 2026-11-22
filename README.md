@@ -126,10 +126,11 @@ Provisioning declares every scope in the `max` preset on the project and enables
 - `google-apps`, the default, requests broad access to Gmail, Drive, Calendar, Contacts, Tasks, Docs, Sheets, and Slides.
 - `gmail` requests identity information and unrestricted Gmail access.
 - `cloud` requests only identity and Google Cloud access; provisioning uses it for the owner setup grant.
+- `colab` requests identity and Google Colab access and enables the Colab API.
 - `workspace-addon` requests identity and Google Cloud access and enables the APIs needed to manage Workspace add-on deployments.
 - `developer` combines `google-apps` with `cloud-platform`. Cloud access remains limited by the authorized account's IAM roles.
 - `workspace-admin` combines `google-apps` with broad Admin SDK and Enterprise License Manager access. Admin operations remain limited by the account's Workspace privileges.
-- `max` combines `google-apps`, `developer`, and `workspace-admin`. It is every scope and API in gclientid's built-in presets, not every API Google offers.
+- `max` combines `google-apps`, `developer`, `workspace-admin`, and `colab`. It is every scope and API in gclientid's built-in presets, not every API Google offers.
 
 Choose the default while provisioning, or override it for one authorization:
 
