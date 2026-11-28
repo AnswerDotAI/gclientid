@@ -1,8 +1,9 @@
-from google.auth.exceptions import RefreshError
+import httpx2, pytest
+from google.auth.exceptions import RefreshError, TransportError
 from google.oauth2.credentials import Credentials
 
 from gclientid.config import config_dir, oauth_settings
-from gclientid.creds import client_file, reauth_cmd, token_file, token_name, _reauth_default, _refresh_error
+from gclientid.creds import client_file, reauth_cmd, token_file, token_name, _HttpxRequest, _reauth_default, _refresh_error
 
 
 def test_paths(tmp_path):
@@ -38,3 +39,12 @@ def test_refresh_error():
     err = _refresh_error(creds, RefreshError('Reauthentication is needed.'))
     assert str(err) == 'Google Cloud session expired for j@answer.ai; run `gclientid-auth j@answer.ai --desktop` to reauthenticate'
     assert str(_refresh_error(creds, RefreshError('invalid_grant'))) == 'Token refresh failed; run `gclientid-auth j@answer.ai --desktop` to reauthorize'
+
+
+def test_httpx_request():
+    c = httpx2.Client(transport=httpx2.MockTransport(lambda req: httpx2.Response(200, json={'access_token': 'fresh', 'expires_in': 3600})))
+    creds = Credentials(token='old', refresh_token='rt', token_uri='https://oauth2.googleapis.com/token', client_id='cid', client_secret='sec')
+    creds.refresh(_HttpxRequest(c))
+    assert creds.token == 'fresh' and creds.valid
+    ce = httpx2.Client(transport=httpx2.MockTransport(lambda req: (_ for _ in ()).throw(httpx2.ConnectError('down'))))
+    with pytest.raises(TransportError): _HttpxRequest(ce)('https://oauth2.googleapis.com/token')

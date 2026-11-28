@@ -4,12 +4,30 @@ from urllib.parse import quote, unquote
 
 import httpx2
 from fastcore.basics import ifnone
-from google.auth.exceptions import RefreshError
-from google.auth.transport.requests import Request
+from google.auth import transport
+from google.auth.exceptions import RefreshError, TransportError
 from google.oauth2.credentials import Credentials
 from pyskills.core import allow
 
 from .config import oauth_settings, output_dir
+
+
+class _HttpxResponse(transport.Response):
+    def __init__(self, r): self._r = r
+    @property
+    def status(self): return self._r.status_code
+    @property
+    def headers(self): return self._r.headers
+    @property
+    def data(self): return self._r.content
+
+
+class _HttpxRequest(transport.Request):
+    def __init__(self, client=None): self._client = client
+    def __call__(self, url, method='GET', body=None, headers=None, timeout=120, **kwargs):
+        req = self._client.request if self._client is not None else httpx2.request
+        try: return _HttpxResponse(req(method, url, content=body, headers=headers, timeout=timeout, **kwargs))
+        except httpx2.HTTPError as e: raise TransportError(e) from e
 
 
 def _suffix(internal=False, desktop=False): return ('-internal' if internal else '') + ('-desktop' if desktop else '')
@@ -128,7 +146,7 @@ async def refresh_creds(creds, token_path=None, reauth=None):
 
     When Google rejects the refresh, `reauth` (None: the store's setting) runs one `gclientid-auth` instead of raising."""
     token_path = ifnone(token_path, getattr(creds, 'token_path', None))
-    try: await asyncio.to_thread(creds.refresh, Request())
+    try: await asyncio.to_thread(creds.refresh, _HttpxRequest())
     except RefreshError as e:
         if token_path and (_reauth_default(token_path) if reauth is None else reauth): return await reauthorize(token_path)
         raise _refresh_error(creds, e) from e
