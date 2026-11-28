@@ -7,7 +7,7 @@ name = "gclientid"
 dynamic = ["version"]
 description = "Create personal Google OAuth clients and tokens locally"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = "Apache-2.0"
 authors = [{name = "Jeremy Howard", email = "github@jhoward.fastmail.fm"}]
 classifiers = [
@@ -31,6 +31,7 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/AnswerDotAI/gclientid"
 
+Documentation = "https://AnswerDotAI.github.io/gclientid/"
 [tool.setuptools.dynamic]
 version = { attr = "gclientid.__version__" }
 
